@@ -90,13 +90,17 @@ const fbm = (x, y, a, b, c) => 0.65 * vnoise(x, y, a, b, c * 2) + 0.35 * vnoise(
 
 // ================= биомы =================
 const BIOMES = [
-  ['Океан', '#2f5f98'], ['Озеро', '#5b9bd5'], ['Луга', '#b9d77a'], ['Лес', '#4f8a3c'],
+  ['Морская вода', '#2f5f98'], ['Пресная вода', '#5b9bd5'], ['Луга', '#b9d77a'], ['Лес', '#4f8a3c'],
   ['Болото', '#6f7f52'], ['Холмы', '#b49a64'], ['Горы', '#8a8580'], ['Пустыня', '#e6d08a'], ['Берег', '#f3ead0'],
-  ['Река', '#3d7fd6'], ['Дорога', '#8d7b68'],
+  ['Дорога', '#8d7b68'],
 ];
-const OCEAN = 0, LAKE = 1, SHORE = 8, RIVER = 9, ROAD = 10;
-const WATER = new Set([OCEAN, LAKE, RIVER]);
-const INCL = { 0: [2], 1: [2], 2: [3, 1, 5, 4], 3: [1, 2, 4, 5], 4: [1, 3], 5: [3, 2, 6, 1], 6: [5, 1], 7: [5, 2, 1], 8: [2], 9: [], 10: [] };
+const SEA = 0, FRESH = 1, SHORE = 8, ROAD = 9;
+const WATER = new Set([SEA, FRESH]);
+// вода «как водоём»: пресная/морская клетка, не являющаяся полосой реки
+const isLakeOrSea = c => !!c && WATER.has(c.b) && !(c.data.rivers && c.data.rivers.band);
+// биом «под» полосой реки/дороги — его видят дети при смешивании
+const groundOf = c => { if (!c) return SEA; for (const ns of ['roads', 'rivers']) { const d = c.data[ns]; if (d && d.band) return d.under; } return c.b; };
+const INCL = { 0: [2], 1: [2], 2: [3, 1, 5, 4], 3: [1, 2, 4, 5], 4: [1, 3], 5: [3, 2, 6, 1], 6: [5, 1], 7: [5, 2, 1], 8: [2], 9: [] };
 const SIZE = ['1 м', '10 м', '100 м', '1 км', '10 км'];
 const TOP = 4, COLS = 16, ROWS = 10;
 const topAxial = (col, row) => [col, row - ((col - (col & 1)) / 2)];
@@ -184,7 +188,7 @@ function buildChains(lc, Q, R, node, kh, meander, ownedFn) {
     let r = attempt(meander);
     if (!ok(r.cells)) r = attempt(0);
     if (!ok(r.cells)) { const cells = removeLoops([...pre, ...hexLine(start, end), ...post]); r = { pts: cells.slice(pre.length, cells.length - post.length).map(c => toPx(...c)), cells }; if (!ok(cells)) fail++; }
-    return { cells: r.cells, size, pts: [...pre.map(c => toPx(...c)), ...r.pts, ...post.map(c => toPx(...c))] };
+    return { fromJ: !a, toJ: !b, cells: r.cells, size, pts: [...pre.map(c => toPx(...c)), ...r.pts, ...post.map(c => toPx(...c))] };
   });
   return { chains, J, fail };
 }
@@ -194,41 +198,47 @@ function refineLinear(ctx, ns, bandBiome, P) {
   const isBand = size => size >= P.K * scale, halfW = size => size / scale; // ширина гекса = 2 единицы
   const own = (q, r) => ctx.byKey.get(K(q, r));
   const node = c => c.data[ns] || (c.data[ns] = { ports: [] });
-  const segs = [], lineChains = []; let fail = 0, J = null, town = false;
+  const segs = [], lineChains = []; let fail = 0, J = null, town = false, myNd = null;
   for (const [a, b] of [[0, 0], ...DIRS]) {
     const pq = ctx.Q + a, pr = ctx.R + b, above = ctx.cellAbove(pq, pr), nd = above && above.data[ns];
     if (!nd) continue;
     const mine = a === 0 && b === 0;
     if (nd.ports) {
       const res = buildChains(lc, pq, pr, nd, kh, P.meander, (q, r) => { const [x, y] = parentOf(q, r); return x === pq && y === pr; });
-      if (mine) { fail = res.fail; J = res.J; town = !!nd.town; }
+      if (mine) { fail = res.fail; J = res.J; town = !!nd.town; myNd = nd; }
       for (const ch of res.chains) { if (isBand(ch.size)) segs.push({ size: ch.size, pts: ch.pts, cells: mine ? ch.cells : null }); else if (mine) lineChains.push(ch); }
     }
     if (nd.segs) for (const s of nd.segs) segs.push({ size: s.size, pts: s.pts.map(([x, y]) => [x * 10, y * 10]) });
   }
   // полоса: свои клетки ближе половины ширины к любой оси (своей или соседской — считается одинаково по обе стороны границы)
   const band = new Map(), put = (c, size) => band.set(c, Math.max(band.get(c) || 0, size));
-  for (const s of segs) if (s.cells) for (const c of s.cells) { const m = own(c[0], c[1]); if (m) put(m, s.size); }
-  for (const c of ctx.cells) for (const s of segs) if (segDist(c.x, c.y, s.pts) <= halfW(s.size)) put(c, s.size);
+  for (const s of segs) if (s.cells) for (const c of s.cells) { const m = own(c[0], c[1]); if (m && !isLakeOrSea(m)) put(m, s.size); }
+  for (const c of ctx.cells) if (!isLakeOrSea(c)) for (const s of segs) if (segDist(c.x, c.y, s.pts) <= halfW(s.size)) put(c, s.size);
   for (const [c, size] of band) {
-    c.b = bandBiome;
+    const under = groundOf(c); c.b = bandBiome;
     const near = segs.map(s => ({ size: s.size, pts: windowPts(s.pts, c.x, c.y, halfW(s.size) + 3) })).filter(s => s.pts.length);
-    c.data[ns] = { band: true, size, segs: near };
-  }
-  // смешивание могло дать «реку/дорогу» там, где полосы нет → лучший другой биом
-  for (const c of ctx.cells) if (c.b === bandBiome && !band.has(c)) {
-    const alt = (c.base || []).filter(([b]) => b !== RIVER && b !== ROAD).sort((a, b) => b[1] - a[1])[0];
-    c.b = alt ? alt[0] : (ctx.dom === RIVER || ctx.dom === ROAD ? 2 : ctx.dom);
+    c.data[ns] = { band: true, size, under, segs: near };
   }
   // линии: цепочки клеток, у каждой клетки — свои точки стыковки с соседями по цепочке
-  const used = new Set(band.keys()), io = ns === 'rivers' ? ['out', 'in'] : ['both', 'both'];
+  const used = new Set(band.keys()), io = ns === 'rivers' ? ['out', 'in'] : ['both', 'both'], river = ns === 'rivers';
+  const wet = cc => isLakeOrSea(own(cc[0], cc[1]));
+  const hasIo = io => !!myNd && myNd.ports.some(p => p.io === io), wetParent = WATER.has(ctx.dom);
+  // путь по своим клеткам от cc до ближайшей воды (водоём), без самой cc
+  const toWater = cc => { const st = own(cc[0], cc[1]); if (!st) return null; const prev = new Map([[st, null]]), qu = [st];
+    while (qu.length) { const x = qu.shift(); if (isLakeOrSea(x)) { const p = []; for (let y = x; y !== st; y = prev.get(y)) p.unshift([y.q, y.r]); return p; }
+      for (const [a, b] of DIRS) { const y = ctx.byKey.get(K(x.q + a, x.r + b)); if (y && !prev.has(y)) { prev.set(y, x); qu.push(y); } } } return null; };
   for (const ch of lineChains) {
+    let cells = ch.cells;
+    if (river && wetParent && ch.toJ && !hasIo('out')) { // река здесь кончается → в первую воду по пути, иначе до ближайшей воды от центра
+      const i = cells.findIndex(wet); if (i >= 0) cells = cells.slice(0, i + 1); else { const p = toWater(cells[cells.length - 1]); if (p) cells = [...cells, ...p]; } }
+    if (river && wetParent && ch.fromJ && !hasIo('in')) { // сток из водоёма → от последней воды по пути
+      const i = cells.map(wet).lastIndexOf(true); if (i >= 0) cells = cells.slice(i); else { const p = toWater(cells[0]); if (p) cells = [...p.reverse(), ...cells]; } }
     let prev = null;
-    for (const cc of ch.cells) {
+    for (const cc of cells) {
       const cur = own(cc[0], cc[1]);
       if (prev) {
         const d = dirIndex(prev, cc);
-        if (d >= 0) {
+        if (d >= 0 && !(river && wet(prev) && wet(cc))) { // по воде река линией не идёт
           const s = edgeSlot(lc, prev[0], prev[1], d, kh), pa = own(prev[0], prev[1]);
           if (pa && !band.has(pa)) addPort(node(pa), d, s, ch.size, io[0]);
           if (cur && !band.has(cur)) addPort(node(cur), (d + 3) % 6, s, ch.size, io[1]);
@@ -256,7 +266,7 @@ const RULES = [
         const fall = Math.min(1, Math.min(c.col, COLS - 1 - c.col) / 2.5, Math.min(c.row, ROWS - 1 - c.row) / 2);
         e *= 0.5 + 0.5 * fall;
         const m = (ctx.noise(x / 5, y / 5, 2) - 0.5) * 1.8 + 0.5;
-        c.b = e < 0.33 ? OCEAN : e > 0.72 ? 6 : e > 0.62 ? 5 : m < 0.3 ? 7 : m < 0.5 ? 2 : (m > 0.75 && e < 0.45) ? 4 : 3;
+        c.b = e < 0.33 ? SEA : e > 0.72 ? 6 : e > 0.62 ? 5 : m < 0.3 ? 7 : m < 0.5 ? 2 : (m > 0.75 && e < 0.45) ? 4 : 3;
         c.data[this.ns] = { высота: +e.toFixed(3), влажность: +m.toFixed(2) };
       }
     } },
@@ -267,18 +277,18 @@ const RULES = [
         const own = prev.get(c), cnt = new Map();
         for (const nb of ctx.nb(c)) if (nb) cnt.set(prev.get(nb), (cnt.get(prev.get(nb)) || 0) + 1);
         let best = own, bc = 0; for (const [b, k] of cnt) if (b !== own && k > bc) { best = b; bc = k; }
-        if (bc >= (own === OCEAN ? 5 : 3) && ctx.rand(c.q, c.r) < (bc - 2) * ctx.p.chance) { c.b = best; n++; }
+        if (bc >= (own === SEA ? 5 : 3) && ctx.rand(c.q, c.r) < (bc - 2) * ctx.p.chance) { c.b = best; n++; }
       }
       return { изменено: n };
     } },
   { id: 'top.detachedWater', stage: 'top', name: 'Вода без связи с главным океаном → озеро', params: [{ key: 'maxSize', label: 'Макс. размер', min: 1, max: 30, step: 1, value: 8 }],
     apply(ctx) {
-      const comps = waterComponents(ctx.cells, c => ctx.nb(c), c => c.b === OCEAN);
+      const comps = waterComponents(ctx.cells, c => ctx.nb(c), c => c.b === SEA);
       const main = comps.reduce((a, b) => (!a || b.cells.length > a.cells.length) ? b : a, null);
       let lakes = 0;
       for (const comp of comps) {
         if (comp === main || comp.edge || comp.cells.length > ctx.p.maxSize) continue;
-        for (const c of comp.cells) { c.b = LAKE; c.data[this.ns] = { вода: 'пресная', размер: comp.cells.length }; }
+        for (const c of comp.cells) { c.b = FRESH; c.data[this.ns] = { вода: 'пресная', размер: comp.cells.length }; }
         lakes++;
       }
       return { озёр: lakes };
@@ -294,7 +304,7 @@ const RULES = [
         while (cur && !water(cur) && !down.has(cur)) {
           let best = null, bd = -1, be = elev(cur);
           ctx.nb(cur).forEach((n, d) => { const e = elev(n); if (e < be) { be = e; best = n; bd = d; } }); // за краем карты — океан
-          if (bd < 0) { if (cur !== s) { cur.b = LAKE; pits++; } break; } // яма → озеро
+          if (bd < 0) { if (cur !== s) { cur.b = FRESH; pits++; } break; } // яма → озеро
           down.set(cur, { d: bd, next: best }); cur = best;
         }
       }
@@ -376,7 +386,7 @@ const RULES = [
     } },
   { id: 'draft.rivers', ns: 'rivers', stage: 'draft', name: 'Реки родителя → цепочки / полосы детей', params: [
       { key: 'meander', label: 'Извилистость', min: 0, max: 5, step: 0.25, value: 2.5 }, { key: 'K', label: 'Порог полосы (ширина / клетка)', min: 0.2, max: 2, step: 0.1, value: 0.5 }],
-    apply(ctx) { return refineLinear(ctx, 'rivers', RIVER, ctx.p); } },
+    apply(ctx) { return refineLinear(ctx, 'rivers', FRESH, ctx.p); } },
   { id: 'draft.roads', ns: 'roads', stage: 'draft', name: 'Дороги родителя → цепочки / полосы детей', params: [
       { key: 'meander', label: 'Извилистость', min: 0, max: 5, step: 0.25, value: 0.75 }, { key: 'K', label: 'Порог полосы (ширина / клетка)', min: 0.2, max: 2, step: 0.1, value: 0.5 }],
     apply(ctx) { return refineLinear(ctx, 'roads', ROAD, ctx.p); } },
@@ -408,7 +418,7 @@ const RULES = [
   { id: 'final.continue', stage: 'final', name: 'Продолжение пятен соседа через границу', params: [{ key: 'strength', label: 'Сила', min: 0, max: 1.2, step: 0.05, value: 1 }],
     apply(ctx) {
       const inc = 'draft.inclusions', P = [0.85, 0.55, 0.3].map(v => Math.min(1, v * ctx.p.strength));
-      const blocked = m => m.data[this.ns] || m.data[inc] || (m.data.rivers && m.data.rivers.band) || (m.data.roads && m.data.roads.band);
+      const blocked = m => m.data[this.ns] || m.data[inc] || m.data.rivers || m.data.roads; // реки/дороги не перекрываем пятнами
       let front = [], n = 0;
       for (const d of ctx.neighborDrafts) for (const c of d.cells) { const di = c.data[inc]; if (!di) continue;
         for (const [a, b] of DIRS) { const m = ctx.byKey.get(K(c.q + a, c.r + b)); if (m && !m.data[inc]) front.push([m, di.t]); } }
@@ -425,20 +435,20 @@ const RULES = [
     } },
   { id: 'final.enclosedWater', stage: 'final', name: 'Вода внутри гекса, не касающаяся края → озеро', params: [{ key: 'maxSize', label: 'Макс. размер', min: 1, max: 60, step: 1, value: 30 }],
     apply(ctx) {
-      const comps = waterComponents(ctx.cells, c => DIRS.map(([a, b]) => ctx.byKey.get(K(c.q + a, c.r + b))), c => c.b === OCEAN);
+      const comps = waterComponents(ctx.cells, c => DIRS.map(([a, b]) => ctx.byKey.get(K(c.q + a, c.r + b))), c => c.b === SEA);
       let lakes = 0;
       for (const comp of comps) {
         if (comp.edge || comp.cells.length > ctx.p.maxSize) continue; // касается края → не знаем, куда ведёт → остаётся океаном
-        for (const c of comp.cells) { c.b = LAKE; c.data[this.ns] = { вода: 'пресная', размер: comp.cells.length }; }
+        for (const c of comp.cells) { c.b = FRESH; c.data[this.ns] = { вода: 'пресная', размер: comp.cells.length }; }
         lakes++;
       }
       return { озёр: lakes };
     } },
-  { id: 'final.lakeShore', stage: 'final', name: 'Озеро у океана → берег', forbids: [[LAKE, OCEAN]], params: [],
+  { id: 'final.lakeShore', stage: 'final', name: 'Пресная вода у морской → берег (кроме устьев рек)', forbids: [[FRESH, SEA]], exempt: c => !!c.data.rivers, params: [],
     // только убирает спорный биом со своей стороны и не создаёт океан → проверки по черновику соседа достаточно
     apply(ctx) {
       let n = 0;
-      for (const c of ctx.cells) if (c.b === LAKE && DIRS.some(([a, b]) => ctx.biomeAt(c.q + a, c.r + b) === OCEAN)) { c.b = SHORE; c.data[this.ns] = { было: 'озеро' }; n++; }
+      for (const c of ctx.cells) if (c.b === FRESH && !c.data.rivers && DIRS.some(([a, b]) => ctx.biomeAt(c.q + a, c.r + b) === SEA)) { c.b = SHORE; c.data[this.ns] = { было: 'пресная вода' }; n++; }
       return { клеток: n };
     } },
 ];
@@ -474,7 +484,7 @@ const deepFreeze = c => { for (const v of Object.values(c.data)) Object.freeze(v
 let topCells = [], topByKey = new Map(), topStats = {};
 function generateTop() {
   topCells = [];
-  for (let row = 0; row < ROWS; row++) for (let col = 0; col < COLS; col++) { const [q, r] = topAxial(col, row); topCells.push({ q, r, col, row, b: OCEAN, data: {} }); }
+  for (let row = 0; row < ROWS; row++) for (let col = 0; col < COLS; col++) { const [q, r] = topAxial(col, row); topCells.push({ q, r, col, row, b: SEA, data: {} }); }
   topByKey = new Map(topCells.map(c => [K(c.q, c.r), c]));
   topStats = runStage('top', { lvl: TOP, cells: topCells, byKey: topByKey, nb: c => DIRS.map(([a, b]) => topByKey.get(K(c.q + a, c.r + b))) });
 }
@@ -484,11 +494,11 @@ function getCell(L, q, r) {
   const [Q, R] = parentOf(q, r);
   return getBatch(L + 1, Q, R).byKey.get(K(q, r));
 }
-const getBiome = (L, q, r) => { const c = getCell(L, q, r); return c ? c.b : OCEAN; };
+const getBiome = (L, q, r) => { const c = getCell(L, q, r); return c ? c.b : SEA; };
 function getDraft(L, Q, R) {
   const key = 'd' + L + ':' + Q + ':' + R; if (cache.has(key)) return cache.get(key);
-  const dom = getBiome(L, Q, R), [px, py] = toPx(Q, R, 10);
-  const parents = RING2.map(([a, b]) => { const [x, y] = toPx(Q + a, R + b, 10); return { b: getBiome(L, Q + a, R + b), x, y }; });
+  const dom = groundOf(getCell(L, Q, R)), [px, py] = toPx(Q, R, 10);
+  const parents = RING2.map(([a, b]) => { const [x, y] = toPx(Q + a, R + b, 10); return { b: groundOf(getCell(L, Q + a, R + b)), x, y }; });
   const cells = CHILD_OFFSETS.map(([dq, dr], idx) => {
     const q = 10 * Q + dq, r = 10 * R + dr, [x, y] = toPx(q, r);
     return { q, r, idx, x, y, f: Math.max(0, 1 - hexNorm(x - px, y - py, 10)), b: -1, data: {} };
@@ -512,15 +522,15 @@ function getBatch(L, Q, R) {
 }
 
 // ================= проверки (общие для всех правил) =================
-const forbiddenPairs = () => RULES.filter(r => r.enabled && r.forbids).flatMap(r => r.forbids);
+const forbiddenPairs = () => RULES.filter(r => r.enabled && r.forbids).flatMap(r => r.forbids.map(p => [...p, r.exempt || (() => false)]));
 // клетка уровня lvl лежит за краем карты верхнего уровня (туда реки просто вытекают)
 function offMap(lvl, q, r) { for (let l = lvl; l < TOP; l++) [q, r] = parentOf(q, r); return !topByKey.has(K(q, r)); }
 function countViolations(batches, lvl) {
-  const pairs = forbiddenPairs(), bad = (a, b) => pairs.some(([x, y]) => (a === x && b === y) || (a === y && b === x));
+  const pairs = forbiddenPairs(), bad = (a, b) => pairs.some(([x, y, ex]) => ((a.b === x && b.b === y) || (a.b === y && b.b === x)) && !ex(a) && !ex(b));
   const all = new Map(); batches.forEach((b, i) => b.cells.forEach(c => all.set(K(c.q, c.r), [i, c])));
   let total = 0, border = 0, breaks = 0;
   for (const [, [i, c]] of all) {
-    for (const [a, bb] of DIRS.slice(0, 3)) { const n = all.get(K(c.q + a, c.r + bb)); if (n && bad(c.b, n[1].b)) { total++; if (n[0] !== i) border++; } }
+    for (const [a, bb] of DIRS.slice(0, 3)) { const n = all.get(K(c.q + a, c.r + bb)); if (n && bad(c, n[1])) { total++; if (n[0] !== i) border++; } }
     // реки и дороги: у соседа по каждой точке стыковки должна быть ответная (или полоса того же типа)
     for (const ns of ['rivers', 'roads']) {
       const nd = c.data[ns]; if (!nd || !nd.ports) continue;
@@ -565,7 +575,7 @@ function linearSvg(cells, ox, oy, lvl) {
   for (const ns of ['rivers', 'roads']) for (const c of cells) {
     const nd = c.data[ns]; if (!nd || !nd.ports) continue;
     const [cx, cy] = toPx(c.q, c.r);
-    for (const p of nd.ports) {
+    for (const p of (ns === 'rivers' && isLakeOrSea(c)) ? [] : nd.ports) { // в водоёме река не рисуется
       const [x, y] = portXY(c.q, c.r, p.e, p.s, 1), w = Math.min(0.7, Math.max(ns === 'rivers' ? 0.1 : 0.08, 2 * p.size / Math.pow(10, lvl)));
       h += `<line x1="${(x - ox).toFixed(3)}" y1="${(y - oy).toFixed(3)}" x2="${(cx - ox).toFixed(3)}" y2="${(cy - oy).toFixed(3)}" stroke="${ns === 'rivers' ? '#1f6fd1' : '#6b3d1f'}" stroke-width="${w.toFixed(3)}" stroke-linecap="round" pointer-events="none"/>`;
     }
