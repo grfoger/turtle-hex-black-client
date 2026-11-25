@@ -4,6 +4,7 @@ import { setSeed, getSeed } from '../core/random.js';
 import { TOP, world } from '../world/config.js';
 import { getRules, resetCache, generateTop, getTopCells, getBatch } from '../gen/engine.js';
 import { EDITS } from '../gen/edits.js';
+import { LINEAR } from '../features/linear.js';
 
 export const forbiddenPairs = () => getRules().filter(r => r.enabled && r.forbids).flatMap(r => r.forbids.map(p => [...p, r.exempt || (() => false)]));
 function offMap() { return false; } // мир замкнут — края нет
@@ -13,8 +14,8 @@ export function countViolations(batches, lvl) {
   let total = 0, border = 0, breaks = 0;
   for (const [, [i, c]] of all) {
     for (const [a, bb] of DIRS.slice(0, 3)) { const n = all.get(K(c.q + a, c.r + bb)); if (n && bad(c, n[1])) { total++; if (n[0] !== i) border++; } }
-    // реки и дороги: у соседа по каждой точке стыковки должна быть ответная (или полоса того же типа)
-    for (const ns of ['rivers', 'roads']) {
+    // линейные объекты: у соседа по каждой точке стыковки должна быть ответная (или полоса того же вида)
+    for (const { ns } of Object.values(LINEAR)) {
       const nd = c.data[ns]; if (!nd || !nd.ports) continue;
       for (const p of nd.ports) {
         const o = all.get(K(c.q + DIRS[p.e][0], c.r + DIRS[p.e][1])); if (!o) continue; const on = o[1].data[ns];

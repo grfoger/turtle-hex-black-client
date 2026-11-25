@@ -2,8 +2,8 @@
 import { DIRS, K, dirIndex } from '../core/hex.js';
 import { TOP, world } from '../world/config.js';
 import { dirW, distW } from '../world/topology.js';
-import { BIOMES, WATER, ROAD, isLakeOrSea } from '../world/biomes.js';
-import { NS_KH, edgeSlot, addPort, refineLinear } from './linear.js';
+import { BIOMES, WATER } from '../world/biomes.js';
+import { LINEAR, NS_KH, edgeSlot, addPort, refineLinear, isLakeOrSea } from './linear.js';
 
 export const roadRules = {
   top: { id: 'top.roads', ns: 'roads', stage: 'top', name: 'Дороги между городами (ранг по трафику)', params: [
@@ -59,7 +59,7 @@ export const roadRules = {
 
   refine: { id: 'draft.roads', ns: 'roads', stage: 'draft', name: 'Дороги родителя → цепочки / полосы детей', params: [
       { key: 'meander', label: 'Извилистость', min: 0, max: 5, step: 0.25, value: 0.75 }, { key: 'K', label: 'Порог полосы (ширина / клетка)', min: 0.2, max: 2, step: 0.1, value: 0.5 }],
-    apply(ctx) { return refineLinear(ctx, 'roads', ROAD, ctx.p); } },
+    apply(ctx) { return refineLinear(ctx, LINEAR.roads, ctx.p); } },
 
   paths: { id: 'draft.paths', ns: 'roads', stage: 'draft', name: 'Хутора и тропы к дорогам (внутри гекса)', params: [
       { key: 'rate', label: 'Частота, %', min: 0, max: 5, step: 0.1, value: 0.8 }, { key: 'maxLen', label: 'Макс. длина, клеток', min: 3, max: 30, step: 1, value: 12 }],

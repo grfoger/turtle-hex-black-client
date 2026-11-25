@@ -2,6 +2,7 @@
 import { SQ3, DIRS, K, toPx } from '../core/hex.js';
 import { waterComponents } from '../core/graph.js';
 import { BIOMES, B, SEA, FRESH, SHORE } from '../world/biomes.js';
+import { hasLinear } from './linear.js';
 
 export const terrainRules = {
   base: { id: 'top.base', stage: 'top', locked: true, name: 'Высота и влажность → биом', params: [
@@ -84,7 +85,7 @@ export const terrainRules = {
   continue: { id: 'final.continue', stage: 'final', name: 'Продолжение пятен соседа через границу', params: [{ key: 'strength', label: 'Сила', min: 0, max: 1.2, step: 0.05, value: 1 }],
     apply(ctx) {
       const inc = 'draft.inclusions', P = [0.85, 0.55, 0.3].map(v => Math.min(1, v * ctx.p.strength));
-      const blocked = m => m.data[this.ns] || m.data[inc] || m.data.rivers || m.data.roads; // реки/дороги не перекрываем пятнами
+      const blocked = m => m.data[this.ns] || m.data[inc] || hasLinear(m); // реки/дороги не перекрываем пятнами
       let front = [], n = 0;
       for (const d of ctx.neighborDrafts) for (const c of d.cells) { const di = c.data[inc]; if (!di) continue;
         for (const [a, b] of DIRS) { const m = ctx.byKey.get(K(c.q + a, c.r + b)); if (m && !m.data[inc]) front.push([m, di.t]); } }

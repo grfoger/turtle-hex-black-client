@@ -1,10 +1,12 @@
 // Точка входа генератора (без DOM): собирает движок, правила и слой правок. Её подключают и песочница, и тесты в node.
-import { setRules, setOverlay } from './gen/engine.js';
+import { setRules, setOverlay, setGround } from './gen/engine.js';
+import { groundOf } from './features/linear.js';
 import { applyEdits } from './gen/edits.js';
 import { RULES } from './rules.js';
 
 setRules(RULES);
 setOverlay(applyEdits);
+setGround(groundOf);
 
 export { RULES };
 export { setSeed, getSeed } from './core/random.js';

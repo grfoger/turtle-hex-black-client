@@ -34,7 +34,3 @@ export const BIOMES = LIST.map(b => ({ ...b, inclusions: b.inclusions.map(id => 
 
 export const SEA = B.sea, FRESH = B.fresh, SHORE = B.shore, ROAD = B.road;
 export const WATER = new Set(BIOMES.flatMap((b, i) => b.water ? [i] : []));
-// вода «как водоём»: пресная/морская клетка, не являющаяся полосой реки
-export const isLakeOrSea = c => !!c && WATER.has(c.b) && !(c.data.rivers && c.data.rivers.band);
-// биом «под» полосой реки/дороги — его видят дети при смешивании
-export const groundOf = c => { if (!c) return SEA; for (const ns of ['roads', 'rivers']) { const d = c.data[ns]; if (d && d.band) return d.under; } return c.b; };

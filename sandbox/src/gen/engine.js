@@ -5,13 +5,15 @@ import { DIRS, K, toPx, hexNorm, parentOf, CHILD_OFFSETS, RING2 } from '../core/
 import { hash, rngFrom } from '../core/random.js';
 import { TOP, world } from '../world/config.js';
 import { wrap, pnoise } from '../world/topology.js';
-import { SEA, groundOf } from '../world/biomes.js';
+import { SEA } from '../world/biomes.js';
 
-let RULES = [], overlay = (lvl, c) => c;
+let RULES = [], overlay = (lvl, c) => c, groundOf = c => c ? c.b : SEA;
 export const setRules = list => { RULES = list; };
 export const getRules = () => RULES;
 // overlay(lvl, cell) → клетка с наложенными правками (генератор видит родителя уже исправленным)
 export const setOverlay = fn => { overlay = fn; };
+// groundOf(cell) → биом, который видят дети при смешивании (например, «под» полосой реки)
+export const setGround = fn => { groundOf = fn; };
 
 const cache = new Map();
 export const resetCache = () => cache.clear();

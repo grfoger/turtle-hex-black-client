@@ -3,7 +3,7 @@ import { DIRS, K, dirIndex } from '../core/hex.js';
 import { waterComponents } from '../core/graph.js';
 import { TOP } from '../world/config.js';
 import { BIOMES, WATER, FRESH } from '../world/biomes.js';
-import { NS_KH, edgeSlot, addPort, refineLinear } from './linear.js';
+import { LINEAR, NS_KH, edgeSlot, addPort, refineLinear } from './linear.js';
 import { streamPorts } from './streams.js';
 
 export const riverRules = {
@@ -71,7 +71,7 @@ export const riverRules = {
     apply(ctx) {
       // ширина ручья, пересекающего границы гексов, — по масштабу детей
       const extraPorts = (lc, pq, pr) => { const SS = { 4: 100, 3: 20, 2: 4, 1: 1 }[lc]; return ctx.p.streams && SS ? streamPorts(ctx, lc + 1, pq, pr, ctx.p.streams, SS) : []; };
-      return refineLinear(ctx, 'rivers', FRESH, ctx.p, { extraPorts });
+      return refineLinear(ctx, LINEAR.rivers, ctx.p, { extraPorts });
     } },
 
   springs: { id: 'draft.springs', ns: 'rivers', stage: 'draft', name: 'Родники и ручьи (внутри гекса)', params: [

@@ -6,8 +6,8 @@ import { DIRS, K, toPx, parentOf } from '../core/hex.js';
 import { hash } from '../core/random.js';
 import { TOP } from '../world/config.js';
 import { wrap, pnoise } from '../world/topology.js';
-import { BIOMES, isLakeOrSea } from '../world/biomes.js';
-import { NS_KH, canonEdge, edgeSlot } from './linear.js';
+import { BIOMES } from '../world/biomes.js';
+import { NS_KH, canonEdge, edgeSlot, isLakeOrSea } from './linear.js';
 
 function topElev(ctx, L, q, r) { for (let l = L; l < TOP; l++) [q, r] = parentOf(q, r); const t = ctx.topCell(q, r); return t && t.data['top.base'] ? t.data['top.base'].высота : 0; }
 const hasRiver = c => !!(c.data.rivers && (c.data.rivers.ports || c.data.rivers.band));

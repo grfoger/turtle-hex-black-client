@@ -4,9 +4,26 @@
 import { DIRS, OWNED, K, toPx, parentOf, childRound, hexDist, hexLine, dirIndex, unitDir } from '../core/hex.js';
 import { hash, strHash, vnoise } from '../core/random.js';
 import { wrap } from '../world/topology.js';
-import { WATER, FRESH, isLakeOrSea, groundOf } from '../world/biomes.js';
+import { SEA, WATER, FRESH, ROAD } from '../world/biomes.js';
 
+// Виды линейных объектов. Общий код опирается на их свойства, а не на имена:
+//   directed      — у линии есть направление (in → out), иначе точки стыковки двусторонние (both)
+//   endsInWater   — объект кончается в воде и не идёт линией по водоёму; тупик в сухом гексе → пруд; исток ручья — родник
+//   junctionOnLand — развилка и поселение в центре гекса не ставятся на воду
+//   bandBiome     — биом клеток, когда объект шире клетки (полоса)
+export const LINEAR = {
+  rivers: { ns: 'rivers', directed: true, endsInWater: true, junctionOnLand: false, bandBiome: FRESH },
+  roads: { ns: 'roads', directed: false, endsInWater: false, junctionOnLand: true, bandBiome: ROAD },
+};
 export const NS_KH = { rivers: strHash('rivers'), roads: strHash('roads') };
+// у полосы какого вида спрашивать «что под ней» (дорога может лежать поверх реки-моста)
+const BAND_PRIORITY = ['roads', 'rivers'];
+// вода «как водоём»: пресная/морская клетка, не являющаяся полосой реки
+export const isLakeOrSea = c => !!c && WATER.has(c.b) && !(c.data.rivers && c.data.rivers.band);
+// биом «под» полосой — его видят дети при смешивании
+export const groundOf = c => { if (!c) return SEA; for (const ns of BAND_PRIORITY) { const d = c.data[ns]; if (d && d.band) return d.under; } return c.b; };
+// есть ли в клетке какой-нибудь линейный объект (реки, дороги…)
+export const hasLinear = c => Object.keys(LINEAR).some(ns => c.data[ns]);
 // слот на ребре: хэш КАНОНИЧЕСКОГО ребра (владелец + своё ребро) → обе стороны получают одно и то же
 export function canonEdge(q, r, e) { return OWNED.has(e) ? [q, r, e] : [q + DIRS[e][0], r + DIRS[e][1], (e + 3) % 6]; }
 export function edgeSlot(lvl, q, r, e, kh) { const [q0, r0, ce] = canonEdge(q, r, e), [cq, cr] = wrap(lvl, q0, r0); return Math.floor(hash(kh, lvl, cq, cr, ce, 991) * 3) - 1; }
@@ -92,9 +109,9 @@ function buildChains(lc, Q, R, node, kh, meander, ownedFn, fixJ) {
   return { chains, J, fail };
 }
 // Общий шаг «линия родителя → дети»: цепочки (если объект ýже порога) или полоса клеток (если шире).
-// hooks.extraPorts(lc, pq, pr) — дополнительные точки стыковки своего родителя (например, ручьи через границы гексов).
-export function refineLinear(ctx, ns, bandBiome, P, hooks = {}) {
-  const lc = ctx.lvl, kh = NS_KH[ns], scale = Math.pow(10, lc);
+// kind — вид из LINEAR; hooks.extraPorts(lc, pq, pr) — дополнительные точки стыковки своего родителя (например, ручьи через границы гексов).
+export function refineLinear(ctx, kind, P, hooks = {}) {
+  const ns = kind.ns, lc = ctx.lvl, kh = NS_KH[ns], scale = Math.pow(10, lc);
   const isBand = size => size >= P.K * scale, halfW = size => size / scale; // ширина гекса = 2 единицы
   const own = (q, r) => ctx.byKey.get(K(q, r));
   const node = c => c.data[ns] || (c.data[ns] = { ports: [] });
@@ -107,15 +124,15 @@ export function refineLinear(ctx, ns, bandBiome, P, hooks = {}) {
     if (mine && hooks.extraPorts) { const vs = hooks.extraPorts(lc, pq, pr); if (vs.length) nd = { ...(nd || {}), ports: [...((nd && nd.ports) || []), ...vs] }; }
     if (!nd) continue;
     if (nd.ports) {
-      const res = buildChains(lc, pq, pr, nd, kh, P.meander, (q, r) => { const [x, y] = parentOf(q, r); return x === pq && y === pr; }, mine && ns === 'roads' ? nearLand : null);
+      const res = buildChains(lc, pq, pr, nd, kh, P.meander, (q, r) => { const [x, y] = parentOf(q, r); return x === pq && y === pr; }, mine && kind.junctionOnLand ? nearLand : null);
       if (mine) { fail = res.fail; J = res.J; town = nd.town || false; myNd = nd; }
       for (const ch of res.chains) { if (isBand(ch.size)) segs.push({ size: ch.size, pts: ch.pts, cells: mine ? ch.cells : null }); else if (mine) lineChains.push(ch); }
     }
     if (nd.segs) { const [ax, ay] = toPx(pq, pr); for (const s of nd.segs) segs.push({ size: s.size, pts: s.pts.map(([x, y]) => [(x + ax) * 10, (y + ay) * 10]) }); }
   }
-  const river = ns === 'rivers', hasIo = io => !!myNd && myNd.ports.some(p => p.io === io);
+  const water = kind.endsInWater, hasIo = io => !!myNd && myNd.ports.some(p => p.io === io);
   let pond = false;
-  if (river && J && !WATER.has(ctx.dom) && hasIo('in') && !hasIo('out')) {
+  if (water && J && !WATER.has(ctx.dom) && hasIo('in') && !hasIo('out')) { // тупик в сухом гексе → пруд
     const j = own(J[0], J[1]);
     if (j) { pond = true; for (const c of [j, ...DIRS.map(([a, b]) => own(J[0] + a, J[1] + b))]) if (c && (c === j || ctx.rand(c.q, c.r, 7) < 0.4)) { c.b = FRESH; c.data[ns] = { ports: [], ...(c.data[ns] || {}), пруд: true }; } }
   }
@@ -124,12 +141,12 @@ export function refineLinear(ctx, ns, bandBiome, P, hooks = {}) {
   for (const s of segs) if (s.cells) for (const c of s.cells) { const m = own(c[0], c[1]); if (m && !isLakeOrSea(m)) put(m, s.size); }
   for (const c of ctx.cells) if (!isLakeOrSea(c)) for (const s of segs) if (segDist(c.x, c.y, s.pts) <= halfW(s.size)) put(c, s.size);
   for (const [c, size] of band) {
-    const under = groundOf(c); c.b = bandBiome;
+    const under = groundOf(c); c.b = kind.bandBiome;
     const near = segs.map(s => ({ size: s.size, pts: windowPts(s.pts, c.x, c.y, halfW(s.size) + 3).map(([a, b]) => [+(a - c.x).toFixed(2), +(b - c.y).toFixed(2)]) })).filter(s => s.pts.length);
     c.data[ns] = { band: true, size, under, segs: near };
   }
   // линии: цепочки клеток, у каждой клетки — свои точки стыковки с соседями по цепочке
-  const used = new Set(band.keys()), io = river ? ['out', 'in'] : ['both', 'both'];
+  const used = new Set(band.keys()), io = kind.directed ? ['out', 'in'] : ['both', 'both'];
   const wet = cc => isLakeOrSea(own(cc[0], cc[1]));
   const wetParent = WATER.has(ctx.dom) || pond;
   // путь по своим клеткам от cc до ближайшей воды (водоём), без самой cc
@@ -138,16 +155,16 @@ export function refineLinear(ctx, ns, bandBiome, P, hooks = {}) {
       for (const [a, b] of DIRS) { const y = ctx.byKey.get(K(x.q + a, x.r + b)); if (y && !prev.has(y)) { prev.set(y, x); qu.push(y); } } } return null; };
   for (const ch of lineChains) {
     let cells = ch.cells;
-    if (river && wetParent && ch.toJ && !hasIo('out')) { // река здесь кончается → в первую воду по пути, иначе до ближайшей воды от центра
+    if (water && wetParent && ch.toJ && !hasIo('out')) { // река здесь кончается → в первую воду по пути, иначе до ближайшей воды от центра
       const i = cells.findIndex(wet); if (i >= 0) cells = cells.slice(0, i + 1); else { const p = toWater(cells[cells.length - 1]); if (p) cells = [...cells, ...p]; } }
-    if (river && wetParent && ch.fromJ && !hasIo('in')) { // сток из водоёма → от последней воды по пути
+    if (water && wetParent && ch.fromJ && !hasIo('in')) { // сток из водоёма → от последней воды по пути
       const i = cells.map(wet).lastIndexOf(true); if (i >= 0) cells = cells.slice(i); else { const p = toWater(cells[0]); if (p) cells = [...p.reverse(), ...cells]; } }
     let prev = null;
     for (const cc of cells) {
       const cur = own(cc[0], cc[1]);
       if (prev) {
         const d = dirIndex(prev, cc);
-        if (d >= 0 && !(river && wet(prev) && wet(cc))) { // по воде река линией не идёт
+        if (d >= 0 && !(water && wet(prev) && wet(cc))) { // по водоёму линией не идёт
           const s = edgeSlot(lc, prev[0], prev[1], d, kh), pa = own(prev[0], prev[1]);
           if (pa && !band.has(pa)) addPort(node(pa), d, s, ch.size, io[0], ch.t);
           if (cur && !band.has(cur)) addPort(node(cur), (d + 3) % 6, s, ch.size, io[1], ch.t);
@@ -158,7 +175,8 @@ export function refineLinear(ctx, ns, bandBiome, P, hooks = {}) {
       prev = cc;
     }
   }
-  if (river && J && hasIo('out') && !hasIo('in') && myNd.ports.every(p => p.ручей)) { const j = own(J[0], J[1]); if (j && !isLakeOrSea(j)) node(j).spring = true; }
+  // исток ручья — родник
+  if (water && J && hasIo('out') && !hasIo('in') && myNd.ports.every(p => p.ручей)) { const j = own(J[0], J[1]); if (j && !isLakeOrSea(j)) node(j).spring = true; }
   if (town && J) { const j = own(J[0], J[1]); if (j && !band.has(j)) node(j).town = town; }
   const st = { ветвей: lineChains.length, 'клеток полосы': band.size }; if (fail) st['ошибок трассировки'] = fail; return st;
 }
