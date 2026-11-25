@@ -31,7 +31,7 @@ svg{border:1px solid #ccc;width:min(720px,100%);height:auto;background:#f6f6f6}
 <div id="status"></div>
 <div class="wrap">
   <svg id="svg"></svg>
-  <div class="side"><div id="info"></div><h4>Правила</h4><div id="rules"></div><h4>Биомы</h4><div class="legend" id="legend"></div></div>
+  <div class="side"><div id="info"></div><h4>Типы дорог <span class="meta">(сверху — главные; последний — тропы нижних уровней)</span></h4><div id="roadTypes"></div><h4>Правила</h4><div id="rules"></div><h4>Биомы</h4><div class="legend" id="legend"></div></div>
 </div>
 <script>
 'use strict';
@@ -108,6 +108,7 @@ const topAxial = (col, row) => [col, row - ((col - (col & 1)) / 2)];
 // ================= линейные объекты: реки и дороги =================
 // Узел в клетке: data[ns] = { ports: [{e: ребро 0..5, s: слот -1|0|1, size: ширина в метрах, io: in|out|both}], town? }
 // или полоса: data[ns] = { band: true, size, segs: [{size, pts}] } — когда объект шире порога для масштаба клетки.
+let ROAD_TYPES = [{ name: 'Тракт', w: 12 }, { name: 'Дорога', w: 6 }, { name: 'Просёлок', w: 3 }, { name: 'Тропа', w: 1 }];
 const NS_KH = { rivers: strHash('rivers'), roads: strHash('roads') };
 // слот на ребре: хэш КАНОНИЧЕСКОГО ребра (владелец + своё ребро) → обе стороны получают одно и то же
 function canonEdge(q, r, e) { return OWNED.has(e) ? [q, r, e] : [q + DIRS[e][0], r + DIRS[e][1], (e + 3) % 6]; }
@@ -119,7 +120,7 @@ function portXY(q, r, e, s, size) {
   const len = Math.hypot(nx - cx, ny - cy), ux = (nx - cx) / len, uy = (ny - cy) / len;
   return [(cx + nx) / 2 - uy * 0.3 * size * s, (cy + ny) / 2 + ux * 0.3 * size * s];
 }
-function addPort(nd, e, s, size, io) { const ex = nd.ports.find(p => p.e === e); if (ex) { ex.size = Math.max(ex.size, size); return; } nd.ports.push({ e, s, size, io }); }
+function addPort(nd, e, s, size, io, t) { const ex = nd.ports.find(p => p.e === e); if (ex) { ex.size = Math.max(ex.size, size); if (t != null) ex.t = ex.t == null ? t : Math.min(ex.t, t); return; } const p = { e, s, size, io }; if (t != null) p.t = t; nd.ports.push(p); }
 function curvePts([ax, ay], [bx, by], tA, tB, amp, kh, pid, lc, idx) {
   const d = Math.hypot(bx - ax, by - ay), k = 0.35 * d + 1, nx = -(by - ay) / (d || 1), ny = (bx - ax) / (d || 1);
   const p1 = [ax + tA[0] * k, ay + tA[1] * k], p2 = [bx - tB[0] * k, by - tB[1] * k], pts = [], N = Math.max(8, Math.ceil(d * 4));
@@ -174,11 +175,11 @@ function buildChains(lc, Q, R, node, kh, meander, ownedFn) {
     return { ...p, pc, inner: [pc[0] - dq, pc[1] - dr], outer: [pc[0] + dq, pc[1] + dr] }; });
   const ins = ports.filter(p => p.io === 'in'), out = ports.find(p => p.io === 'out'), both = ports.filter(p => p.io === 'both');
   const specs = [];
-  if (both.length) { if (both.length === 2 && !node.town) specs.push([both[0], both[1], Math.max(both[0].size, both[1].size)]); else both.forEach(p => specs.push([p, null, p.size])); }
+  if (both.length) { if (both.length === 2 && !node.town) specs.push([both[0], both[1], Math.max(both[0].size, both[1].size), Math.min(both[0].t ?? 99, both[1].t ?? 99)]); else both.forEach(p => specs.push([p, null, p.size, p.t])); }
   else if (out && ins.length === 1) specs.push([ins[0], out, out.size]);
   else { if (out) specs.push([null, out, out.size]); ins.forEach(p => specs.push([p, null, p.size])); }
   let fail = 0;
-  const chains = specs.map(([a, b, size], idx) => {
+  const chains = specs.map(([a, b, size, t], idx) => {
     const start = a ? a.inner : J, end = b ? b.inner : J, S0 = toPx(...start), E0 = toPx(...end);
     const cl = Math.hypot(E0[0] - S0[0], E0[1] - S0[1]) || 1, cu = [(E0[0] - S0[0]) / cl, (E0[1] - S0[1]) / cl];
     const tA = a ? unitDir((a.e + 3) % 6) : cu, tB = b ? unitDir(b.e) : cu;
@@ -188,7 +189,7 @@ function buildChains(lc, Q, R, node, kh, meander, ownedFn) {
     let r = attempt(meander);
     if (!ok(r.cells)) r = attempt(0);
     if (!ok(r.cells)) { const cells = removeLoops([...pre, ...hexLine(start, end), ...post]); r = { pts: cells.slice(pre.length, cells.length - post.length).map(c => toPx(...c)), cells }; if (!ok(cells)) fail++; }
-    return { fromJ: !a, toJ: !b, cells: r.cells, size, pts: [...pre.map(c => toPx(...c)), ...r.pts, ...post.map(c => toPx(...c))] };
+    return { fromJ: !a, toJ: !b, cells: r.cells, size, t: t === 99 ? undefined : t, pts: [...pre.map(c => toPx(...c)), ...r.pts, ...post.map(c => toPx(...c))] };
   });
   return { chains, J, fail };
 }
@@ -205,7 +206,7 @@ function refineLinear(ctx, ns, bandBiome, P) {
     const mine = a === 0 && b === 0;
     if (nd.ports) {
       const res = buildChains(lc, pq, pr, nd, kh, P.meander, (q, r) => { const [x, y] = parentOf(q, r); return x === pq && y === pr; });
-      if (mine) { fail = res.fail; J = res.J; town = !!nd.town; myNd = nd; }
+      if (mine) { fail = res.fail; J = res.J; town = nd.town || false; myNd = nd; }
       for (const ch of res.chains) { if (isBand(ch.size)) segs.push({ size: ch.size, pts: ch.pts, cells: mine ? ch.cells : null }); else if (mine) lineChains.push(ch); }
     }
     if (nd.segs) for (const s of nd.segs) segs.push({ size: s.size, pts: s.pts.map(([x, y]) => [x * 10, y * 10]) });
@@ -240,8 +241,8 @@ function refineLinear(ctx, ns, bandBiome, P) {
         const d = dirIndex(prev, cc);
         if (d >= 0 && !(river && wet(prev) && wet(cc))) { // по воде река линией не идёт
           const s = edgeSlot(lc, prev[0], prev[1], d, kh), pa = own(prev[0], prev[1]);
-          if (pa && !band.has(pa)) addPort(node(pa), d, s, ch.size, io[0]);
-          if (cur && !band.has(cur)) addPort(node(cur), (d + 3) % 6, s, ch.size, io[1]);
+          if (pa && !band.has(pa)) addPort(node(pa), d, s, ch.size, io[0], ch.t);
+          if (cur && !band.has(cur)) addPort(node(cur), (d + 3) % 6, s, ch.size, io[1], ch.t);
         }
         if (cur && used.has(cur)) break; // влились в уже проложенную ветку или полосу
       }
@@ -249,7 +250,7 @@ function refineLinear(ctx, ns, bandBiome, P) {
       prev = cc;
     }
   }
-  if (town && J) { const j = own(J[0], J[1]); if (j && !band.has(j)) node(j).town = true; }
+  if (town && J) { const j = own(J[0], J[1]); if (j && !band.has(j)) node(j).town = town; }
   const st = { ветвей: lineChains.length, 'клеток полосы': band.size }; if (fail) st['ошибок трассировки'] = fail; return st;
 }
 
@@ -350,8 +351,8 @@ const RULES = [
       }
       return { истоков: sources.length, 'клеток с рекой': nodes.length, 'ям → озёр': pits, 'проточных озёр': drained, 'бессточных': endorheic, 'клеток разлива': grown };
     } },
-  { id: 'top.roads', ns: 'roads', stage: 'top', name: 'Дороги между городами', params: [
-      { key: 'towns', label: 'Городов', min: 0, max: 12, step: 1, value: 6 }, { key: 'size', label: 'Ширина, м', min: 3, max: 40, step: 1, value: 12 }],
+  { id: 'top.roads', ns: 'roads', stage: 'top', name: 'Дороги между городами (ранг по трафику)', params: [
+      { key: 'towns', label: 'Поселений', min: 0, max: 16, step: 1, value: 8 }, { key: 'big', label: 'Доля крупных, %', min: 0, max: 100, step: 5, value: 25 }],
     apply(ctx) {
       const kh = NS_KH.roads, pass = c => c && !WATER.has(c.b), COST = { 2: 1, 3: 2, 4: 4, 5: 3, 6: 8, 7: 2, 8: 1 };
       const node = c => c.data[this.ns] || (c.data[this.ns] = { ports: [] });
@@ -360,7 +361,11 @@ const RULES = [
         if (towns.length >= ctx.p.towns) break;
         if (towns.every(t => hexDist([t.q, t.r], [c.q, c.r]) >= 4)) towns.push(c);
       }
-      towns.forEach(t => { node(t).town = true; });
+      // размер поселения: 3 — город, 2 — посёлок, 1 — деревня
+      const tsize = new Map(towns.map(t => { const x = ctx.rand(t.q, t.r, 2) * 100; return [t, x < ctx.p.big ? 3 : x < ctx.p.big + (100 - ctx.p.big) / 2 ? 2 : 1]; }));
+      towns.sort((a, b) => tsize.get(b) - tsize.get(a)); // крупные подключаются первыми → магистраль между ними
+      towns.forEach(t => { node(t).town = tsize.get(t); });
+      const adj = new Map(), link = (a, b) => { for (const [x, y] of [[a, b], [b, a]]) { if (!adj.has(x)) adj.set(x, new Set()); adj.get(x).add(y); } };
       const onRoad = new Set(towns.slice(0, 1)); let roads = 0;
       for (const t of towns.slice(1)) {
         const dist = new Map([[t, 0]]), prev = new Map(), open = [t]; let hit = null;
@@ -370,14 +375,30 @@ const RULES = [
           ctx.nb(x).forEach(n => { if (!pass(n)) return; const nd = dist.get(x) + (onRoad.has(n) ? 0.3 : (COST[n.b] || 2));
             if (nd < (dist.has(n) ? dist.get(n) : Infinity)) { dist.set(n, nd); prev.set(n, x); if (!open.includes(n)) open.push(n); } });
         }
-        if (!hit) continue;
-        for (let x = hit; x !== t; x = prev.get(x)) {
-          const p = prev.get(x), d = dirIndex([p.q, p.r], [x.q, x.r]), s = edgeSlot(TOP, p.q, p.r, d, kh);
-          addPort(node(p), d, s, ctx.p.size, 'both'); addPort(node(x), (d + 3) % 6, s, ctx.p.size, 'both'); onRoad.add(x); onRoad.add(p);
-        }
+        if (!hit) { onRoad.add(t); continue; } // недостижимо (остров) → начало своей сети
+        for (let x = hit; x !== t; x = prev.get(x)) { link(prev.get(x), x); onRoad.add(x); onRoad.add(prev.get(x)); }
         onRoad.add(t); roads++;
       }
-      return { городов: towns.length, дорог: roads };
+      // трафик: каждая пара поселений, связанных сетью, добавляет size·size на все отрезки своего пути
+      const ek = (a, b) => K(a.q, a.r) < K(b.q, b.r) ? K(a.q, a.r) + '|' + K(b.q, b.r) : K(b.q, b.r) + '|' + K(a.q, a.r);
+      const traffic = new Map();
+      towns.forEach((a, i) => {
+        if (!adj.has(a)) return;
+        const prev = new Map([[a, null]]), qu = [a];
+        while (qu.length) { const x = qu.shift(); for (const y of adj.get(x) || []) if (!prev.has(y)) { prev.set(y, x); qu.push(y); } }
+        for (const b of towns.slice(i + 1)) { if (!prev.has(b)) continue; const w = tsize.get(a) * tsize.get(b);
+          for (let x = b; prev.get(x); x = prev.get(x)) { const k = ek(x, prev.get(x)); traffic.set(k, (traffic.get(k) || 0) + w); } }
+      });
+      // ранг: самый мелкий тип оставлен для троп нижних уровней (если типов больше одного)
+      const nTop = Math.max(1, ROAD_TYPES.length - 1), tmax = Math.max(1, ...traffic.values());
+      const rankOf = t => Math.min(nTop - 1, Math.floor((1 - t / tmax) * nTop));
+      const counts = new Array(nTop).fill(0);
+      for (const [a, set] of adj) for (const b of set) {
+        if (ek(a, b) !== K(a.q, a.r) + '|' + K(b.q, b.r) && K(a.q, a.r) > K(b.q, b.r)) continue; // каждый отрезок один раз
+        const t = rankOf(traffic.get(ek(a, b)) || 0), d = dirIndex([a.q, a.r], [b.q, b.r]), s = edgeSlot(TOP, a.q, a.r, d, kh), w = ROAD_TYPES[t].w;
+        addPort(node(a), d, s, w, 'both', t); addPort(node(b), (d + 3) % 6, s, w, 'both', t); counts[t]++;
+      }
+      const st = { поселений: towns.length, дорог: roads }; counts.forEach((n, t) => { st[ROAD_TYPES[t].name] = n; }); return st;
     } },
   { id: 'draft.blend', stage: 'draft', locked: true, name: 'Смешивание родителей + изгиб + шум', params: [
       { key: 'amp', label: 'Шум', min: 0, max: 1.5, step: 0.05, value: 0.4 }, { key: 'warp', label: 'Изгиб границ', min: 0, max: 16, step: 1, value: 8 }],
@@ -446,6 +467,31 @@ const RULES = [
         n++;
       }
       return { родников: n };
+    } },
+  { id: 'draft.paths', ns: 'roads', stage: 'draft', name: 'Хутора и тропы к дорогам (внутри гекса)', params: [
+      { key: 'rate', label: 'Частота, %', min: 0, max: 5, step: 0.1, value: 0.8 }, { key: 'maxLen', label: 'Макс. длина, клеток', min: 3, max: 30, step: 1, value: 12 }],
+    apply(ctx) {
+      if (ctx.lvl < 1 || ROAD_TYPES.length < 2) return {}; // самый мелкий тип — только внизу; на 1 м хуторов нет
+      const FACT = { 2: 1, 3: 0.5, 4: 0.15, 5: 0.6, 6: 0.1, 7: 0.2, 8: 0.5 }, kh = NS_KH.roads, t = ROAD_TYPES.length - 1, w = ROAD_TYPES[t].w;
+      const target = c => !!(c.data.roads && (c.data.roads.ports || c.data.roads.band));
+      const node = c => c.data[this.ns] || (c.data[this.ns] = { ports: [] });
+      let n = 0;
+      for (const c of ctx.cells) {
+        if (target(c) || isLakeOrSea(c) || !(c.b in FACT) || ctx.rand(c.q, c.r) >= ctx.p.rate / 100 * FACT[c.b]) continue;
+        const prev = new Map([[c, null]]), qu = [c]; let hit = null;
+        while (qu.length && !hit) { const x = qu.shift(); for (const [a, b] of DIRS) { const y = ctx.byKey.get(K(x.q + a, x.r + b)); if (!y || prev.has(y) || isLakeOrSea(y)) continue; prev.set(y, x); if (target(y)) { hit = y; break; } qu.push(y); } }
+        if (!hit) continue;
+        const path = []; for (let x = hit; x; x = prev.get(x)) path.unshift(x);
+        if (path.length - 1 > ctx.p.maxLen) continue;
+        node(path[0]).hamlet = true;
+        for (let i = 0; i < path.length - 1; i++) {
+          const a = path[i], b = path[i + 1], d = dirIndex([a.q, a.r], [b.q, b.r]), s = edgeSlot(ctx.lvl, a.q, a.r, d, kh);
+          addPort(node(a), d, s, w, 'both', t);
+          if (!(b.data.roads && b.data.roads.band)) addPort(node(b), (d + 3) % 6, s, w, 'both', t);
+        }
+        n++;
+      }
+      return { хуторов: n };
     } },
   { id: 'final.continue', stage: 'final', name: 'Продолжение пятен соседа через границу', params: [{ key: 'strength', label: 'Сила', min: 0, max: 1.2, step: 0.05, value: 1 }],
     apply(ctx) {
@@ -608,10 +654,11 @@ function linearSvg(cells, ox, oy, lvl) {
     const nd = c.data[ns]; if (!nd || !nd.ports) continue;
     const [cx, cy] = toPx(c.q, c.r);
     for (const p of (ns === 'rivers' && isLakeOrSea(c)) ? [] : nd.ports) { // в водоёме река не рисуется
-      const [x, y] = portXY(c.q, c.r, p.e, p.s, 1), w = Math.min(0.7, Math.max(ns === 'rivers' ? 0.1 : 0.08, 2 * p.size / Math.pow(10, lvl)));
+      const [x, y] = portXY(c.q, c.r, p.e, p.s, 1), w = Math.min(0.7, Math.max(ns === 'rivers' ? 0.1 : 0.06 + (p.t != null ? 0.05 * Math.max(0, ROAD_TYPES.length - 2 - p.t) : 0.02), 2 * p.size / Math.pow(10, lvl))); // дороги: условная толщина по рангу
       h += `<line x1="${(x - ox).toFixed(3)}" y1="${(y - oy).toFixed(3)}" x2="${(cx - ox).toFixed(3)}" y2="${(cy - oy).toFixed(3)}" stroke="${ns === 'rivers' ? '#1f6fd1' : '#6b3d1f'}" stroke-width="${w.toFixed(3)}" stroke-linecap="round" pointer-events="none"/>`;
     }
-    if (nd.town) h += `<circle cx="${(cx - ox).toFixed(3)}" cy="${(cy - oy).toFixed(3)}" r="0.35" fill="#c0392b" stroke="#fff" stroke-width="0.08" pointer-events="none"/>`;
+    if (nd.town) h += `<circle cx="${(cx - ox).toFixed(3)}" cy="${(cy - oy).toFixed(3)}" r="${0.15 + 0.1 * nd.town}" fill="#c0392b" stroke="#fff" stroke-width="0.08" pointer-events="none"/>`;
+    if (nd.hamlet) h += `<circle cx="${(cx - ox).toFixed(3)}" cy="${(cy - oy).toFixed(3)}" r="0.18" fill="#8a5a2b" stroke="#fff" stroke-width="0.06" pointer-events="none"/>`;
     if (nd.spring) h += `<circle cx="${(cx - ox).toFixed(3)}" cy="${(cy - oy).toFixed(3)}" r="0.22" fill="#fff" stroke="#1f6fd1" stroke-width="0.08" pointer-events="none"/>`;
   }
   return h;
@@ -678,7 +725,19 @@ rulesEl.addEventListener('click', e => {
   [RULES[i], RULES[j]] = [RULES[j], RULES[i]]; regen(true);
 });
 document.getElementById('legend').innerHTML = BIOMES.map(([n, c]) => `<div><span style="background:${c}"></span>${n}</div>`).join('') +
-  '<div class="meta">Линии: синие — реки и ручьи (○ — родник), коричневые — дороги (● — город)</div>';
+  '<div class="meta">Линии: синие — реки и ручьи (○ — родник), коричневые — дороги, толщина по типу (красный ● — поселение, крупнее = больше; коричневый ● — хутор)</div>';
+function renderRoadTypes() {
+  const el = document.getElementById('roadTypes');
+  el.innerHTML = ROAD_TYPES.map((t, i) => `<div class="rule" style="display:flex;gap:6px;align-items:center">${i + 1}. <input data-rt="${i}" data-f="name" value="${t.name}" style="width:110px"> ширина <input data-rt="${i}" data-f="w" type="number" min="0.5" step="0.5" value="${t.w}" style="width:60px"> м <button data-rdel="${i}" ${ROAD_TYPES.length < 2 ? 'disabled' : ''}>✕</button></div>`).join('') + '<button id="rtAdd">+ тип</button>';
+}
+document.getElementById('roadTypes').addEventListener('change', e => { const d = e.target.dataset; if (d.rt == null) return; const t = ROAD_TYPES[+d.rt]; if (d.f === 'w') t.w = Math.max(0.5, +e.target.value || 1); else t.name = e.target.value || t.name; regen(false); });
+document.getElementById('roadTypes').addEventListener('click', e => {
+  const d = e.target.dataset;
+  if (d.rdel != null && ROAD_TYPES.length > 1) ROAD_TYPES.splice(+d.rdel, 1);
+  else if (e.target.id === 'rtAdd') ROAD_TYPES.push({ name: 'Тип ' + (ROAD_TYPES.length + 1), w: Math.max(0.5, ROAD_TYPES[ROAD_TYPES.length - 1].w / 2) });
+  else return;
+  renderRoadTypes(); regen(false);
+});
 function regen(redrawRules = true) {
   SEED = +document.getElementById('seed').value | 0;
   cache.clear(); generateTop(); if (redrawRules) renderRules(); render();
@@ -686,5 +745,6 @@ function regen(redrawRules = true) {
 document.getElementById('seed').addEventListener('input', () => regen(false));
 document.getElementById('rnd').onclick = () => { document.getElementById('seed').value = Math.floor(Math.random() * 100000); regen(false); };
 document.getElementById('checkBtn').onclick = () => { document.getElementById('check').textContent = 'Проверяю…'; setTimeout(runSeamCheck, 20); };
+renderRoadTypes();
 regen();
 </script></body></html>
