@@ -334,13 +334,14 @@ function refineLinear(ctx, ns, bandBiome, P) {
 // ns — пространство имён в c.data, куда правило пишет (по умолчанию = id). Случайность у каждого правила своя.
 // forbids — пары биомов, которые не должны соседствовать; их проверяет общая проверка стыков.
 const RULES = [
-  { id: 'top.base', stage: 'top', locked: true, name: 'Высота и влажность → биом', params: [],
+  { id: 'top.base', stage: 'top', locked: true, name: 'Высота и влажность → биом', params: [
+      { key: 'sea', label: 'Море ниже высоты', min: 0.2, max: 0.5, step: 0.01, value: 0.33 }, { key: 'hill', label: 'Холмы от высоты', min: 0.5, max: 0.95, step: 0.01, value: 0.76 }, { key: 'mount', label: 'Горы от высоты', min: 0.55, max: 1.2, step: 0.01, value: 0.9 }],
     apply(ctx) {
       for (const c of ctx.cells) {
         const [x, y] = toPx(c.q, c.r);
         const e = (ctx.noise(x, y, 4, 1) - 0.5) * 1.8 + 0.5;
         const m = (ctx.noise(x, y, 5, 2) - 0.5) * 1.8 + 0.5;
-        c.b = e < 0.33 ? SEA : e > 0.72 ? 6 : e > 0.62 ? 5 : m < 0.3 ? 7 : m < 0.5 ? 2 : (m > 0.75 && e < 0.45) ? 4 : 3;
+        c.b = e < ctx.p.sea ? SEA : e > ctx.p.mount ? 6 : e > ctx.p.hill ? 5 : m < 0.3 ? 7 : m < 0.5 ? 2 : (m > 0.75 && e < 0.45) ? 4 : 3;
         c.data[this.ns] = { высота: +e.toFixed(3), влажность: +m.toFixed(2) };
       }
     } },
