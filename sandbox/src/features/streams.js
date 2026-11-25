@@ -6,10 +6,9 @@ import { DIRS, K, toPx, parentOf } from '../core/hex.js';
 import { hash } from '../core/random.js';
 import { TOP } from '../world/config.js';
 import { wrap, pnoise } from '../world/topology.js';
-import { isLakeOrSea } from '../world/biomes.js';
+import { BIOMES, isLakeOrSea } from '../world/biomes.js';
 import { NS_KH, canonEdge, edgeSlot } from './linear.js';
 
-const STREAM_WET = { 2: 0.6, 3: 1, 4: 1.5, 5: 1.2, 6: 1.5, 7: 0.05, 8: 0.3 };
 function topElev(ctx, L, q, r) { for (let l = L; l < TOP; l++) [q, r] = parentOf(q, r); const t = ctx.topCell(q, r); return t && t.data['top.base'] ? t.data['top.base'].высота : 0; }
 const hasRiver = c => !!(c.data.rivers && (c.data.rivers.ports || c.data.rivers.band));
 function phi(ctx, L, c) {
@@ -22,7 +21,7 @@ function streamCandidate(ctx, L, A, e, rate) {
   const ra = A.data.rivers, rb = B.data.rivers;
   if ((ra && ra.band) || (rb && rb.band) || (ra && ra.ports && rb && rb.ports)) return null;
   if ((ra && ra.ports && ra.ports.some(p => p.e === e)) || (rb && rb.ports && rb.ports.some(p => p.e === (e + 3) % 6))) return null;
-  const wet = c => isLakeOrSea(c) ? 1 : (STREAM_WET[c.b] || 0), [q0, r0, ce] = canonEdge(A.q, A.r, e), [cq, cr] = wrap(L, q0, r0);
+  const wet = c => isLakeOrSea(c) ? 1 : (BIOMES[c.b].wetness || 0), [q0, r0, ce] = canonEdge(A.q, A.r, e), [cq, cr] = wrap(L, q0, r0);
   return hash(NS_KH.rivers, L, cq, cr, ce, 555) < rate / 100 * (wet(A) + wet(B)) / 2 ? B : null;
 }
 function streamOut(ctx, L, U, rate) { // ребро единственного выхода ручья из U или -1

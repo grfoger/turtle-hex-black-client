@@ -26,7 +26,7 @@ function renderRules() {
       <input type="checkbox" data-en="${i}" ${r.enabled || r.locked ? 'checked' : ''} ${r.locked ? 'disabled' : ''}>
       <span>${r.name}${r.locked ? ' <span class="meta">(базовое)</span>' : ''}</span>
       ${r.locked ? '' : `<button data-up="${i}">↑</button><button data-down="${i}">↓</button>`}</div>
-      <div class="meta">${r.id}${r.ns !== r.id ? ' · data.' + r.ns : ''}${r.forbids ? ' · запрещает: ' + r.forbids.map(([a, b]) => BIOMES[a][0] + '–' + BIOMES[b][0]).join(', ') : ''}</div>
+      <div class="meta">${r.id}${r.ns !== r.id ? ' · data.' + r.ns : ''}${r.forbids ? ' · запрещает: ' + r.forbids.map(([a, b]) => BIOMES[a].name + '–' + BIOMES[b].name).join(', ') : ''}</div>
       ${r.params.map(p => `<label>${p.label} <input type="range" min="${p.min}" max="${p.max}" step="${p.step}" value="${r.values[p.key]}" data-r="${i}" data-k="${p.key}"><b>${r.values[p.key]}</b></label>`).join('')}
     </div>`).join('')).join('');
 }
@@ -69,12 +69,12 @@ $('rnd').onclick = () => { $('seed').value = Math.floor(Math.random() * 100000);
 $('checkBtn').onclick = () => {
   $('check').textContent = 'Проверяю…';
   setTimeout(() => {
-    const s = runSeamCheck(), pairs = s.pairs.map(([a, b]) => BIOMES[a][0] + '–' + BIOMES[b][0]).join(', ') || 'нет';
+    const s = runSeamCheck(), pairs = s.pairs.map(([a, b]) => BIOMES[a].name + '–' + BIOMES[b].name).join(', ') || 'нет';
     $('check').textContent = `Проверка: ${s.views} видов. Запрещённые соседства (${pairs}): ${s.total} (на стыках: ${s.border}). Разрывов рек/дорог: ${s.breaks}. Порядок открытия ${s.orderOk ? 'не влияет ✔' : 'ВЛИЯЕТ ✘'}`;
     render();
   }, 20);
 };
-$('legend').innerHTML = BIOMES.map(([n, c]) => `<div><span style="background:${c}"></span>${n}</div>`).join('') +
+$('legend').innerHTML = BIOMES.map(b => `<div><span style="background:${b.color}"></span>${b.name}</div>`).join('') +
   '<div class="meta">Линии: синие — реки и ручьи (○ — родник), коричневые — дороги, толщина по типу (красный ● — поселение, крупнее = больше; коричневый ● — хутор)</div>';
 
 export function initPanel() { renderRoadTypes(); regen(); startView(); render(); }

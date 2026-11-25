@@ -2,7 +2,7 @@
 import { DIRS, K, dirIndex } from '../core/hex.js';
 import { waterComponents } from '../core/graph.js';
 import { TOP } from '../world/config.js';
-import { WATER, FRESH } from '../world/biomes.js';
+import { BIOMES, WATER, FRESH } from '../world/biomes.js';
 import { NS_KH, edgeSlot, addPort, refineLinear } from './linear.js';
 import { streamPorts } from './streams.js';
 
@@ -78,12 +78,13 @@ export const riverRules = {
       { key: 'rate', label: 'Частота, %', min: 0, max: 5, step: 0.1, value: 1 }, { key: 'maxLen', label: 'Макс. длина, клеток', min: 3, max: 30, step: 1, value: 15 }],
     apply(ctx) {
       const size = { 3: 20, 2: 4, 1: 1 }[ctx.lvl]; if (!size) return {}; // ручьи «своего» масштаба; на 1 м не появляются
-      const FACT = { 2: 0.6, 3: 1, 4: 1.5, 5: 1.2, 6: 1.5, 7: 0.05, 8: 0.3 }, kh = NS_KH.rivers;
+      const kh = NS_KH.rivers;
       const water = c => WATER.has(c.b), target = c => water(c) || !!(c.data.rivers && (c.data.rivers.ports || c.data.rivers.band));
       const node = c => c.data[this.ns] || (c.data[this.ns] = { ports: [] });
       let n = 0;
       for (const c of ctx.cells) {
-        if (target(c) || !(c.b in FACT) || ctx.rand(c.q, c.r) >= ctx.p.rate / 100 * FACT[c.b]) continue;
+        const wet = BIOMES[c.b].wetness;
+        if (target(c) || wet == null || ctx.rand(c.q, c.r) >= ctx.p.rate / 100 * wet) continue;
         const prev = new Map([[c, null]]), qu = [c]; let hit = null;
         while (qu.length && !hit) { const x = qu.shift(); for (const [a, b] of DIRS) { const y = ctx.byKey.get(K(x.q + a, x.r + b)); if (!y || prev.has(y)) continue; prev.set(y, x); if (target(y)) { hit = y; break; } qu.push(y); } }
         if (!hit) continue;

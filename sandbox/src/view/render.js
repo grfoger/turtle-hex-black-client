@@ -8,7 +8,7 @@ import { getRules } from '../gen/engine.js';
 const ruleName = id => (getRules().find(r => r.id === id) || { name: id }).name;
 export const statsHtml = st => Object.entries(st).filter(([, v]) => Object.keys(v).length).map(([id, v]) => `<div class="meta">${ruleName(id)}: ${Object.entries(v).map(([k, x]) => k + ' ' + x).join(', ')}</div>`).join('');
 const short = data => JSON.stringify(data, (k, v) => k === 'pts' ? `[${v.length} точек]` : v);
-export const cellText = (lvl, c, extra) => `Ур. ${lvl} (${SIZE[lvl]}) · ${extra} · ${BIOMES[c.b][0]}\ndata: ${short(c.data)}`;
+export const cellText = (lvl, c, extra) => `Ур. ${lvl} (${SIZE[lvl]}) · ${extra} · ${BIOMES[c.b].name}\ndata: ${short(c.data)}`;
 
 // реки, дороги, поселения, родники: линия от точки стыковки на ребре к центру клетки
 export function linearSvg(cells, ox, oy, lvl) {
@@ -28,15 +28,7 @@ export function linearSvg(cells, ox, oy, lvl) {
   return h;
 }
 
-// значки биомов (в квадрате ±0.6 вокруг центра клетки)
-const ICONS = {
-  0: 'M-0.45,0.05 q0.15,-0.15 0.3,0 t0.3,0 t0.3,0', 1: 'M-0.35,0.05 q0.12,-0.12 0.23,0 t0.23,0 t0.23,0',
-  2: 'M-0.3,0.25 l0.05,-0.25 M-0.2,0.25 l0.1,-0.3 M0.15,0.25 l0.05,-0.25 M0.25,0.25 l0.1,-0.2',
-  3: 'M0,-0.45 L0.3,0.15 L-0.3,0.15 Z M0,0.15 L0,0.4', 4: 'M-0.3,0.3 L-0.3,-0.1 M-0.1,0.3 L-0.1,-0.25 M0.15,0.3 L0.15,-0.05 M-0.45,0.3 L0.45,0.3',
-  5: 'M-0.45,0.25 Q-0.2,-0.2 0.05,0.25 M-0.05,0.25 Q0.2,-0.1 0.45,0.25', 6: 'M-0.5,0.3 L-0.15,-0.35 L0.05,0 L0.2,-0.2 L0.5,0.3 Z',
-  7: 'M-0.45,0.2 Q-0.2,0 0,0.2 Q0.2,0 0.45,0.2', 8: 'M-0.3,0.1 h0.01 M0,-0.1 h0.01 M0.25,0.15 h0.01 M-0.1,0.3 h0.01',
-};
-const ICON_STYLE = { 0: '#ffffff99', 1: '#ffffffaa', 2: '#4f7a2a', 3: '#1f4d16', 4: '#38452a', 5: '#6e5a33', 6: '#3d3a36', 7: '#a8904a', 8: '#b9ab86' };
+// значки биомов (описаны в реестре биомов)
 export function iconsSvg(cells, ox, oy) {
-  return cells.map(c => ICONS[c.b] ? `<path d="${ICONS[c.b]}" transform="translate(${(c.x - ox).toFixed(3)},${(c.y - oy).toFixed(3)})" fill="${c.b === 3 || c.b === 6 ? ICON_STYLE[c.b] : 'none'}" stroke="${ICON_STYLE[c.b]}" stroke-width="${c.b === 8 ? 0.12 : 0.06}" stroke-linecap="round" pointer-events="none"/>` : '').join('');
+  return cells.map(c => { const ic = BIOMES[c.b].icon; return ic ? `<path d="${ic.d}" transform="translate(${(c.x - ox).toFixed(3)},${(c.y - oy).toFixed(3)})" fill="${ic.fill ? ic.stroke : 'none'}" stroke="${ic.stroke}" stroke-width="${ic.width || 0.06}" stroke-linecap="round" pointer-events="none"/>` : ''; }).join('');
 }

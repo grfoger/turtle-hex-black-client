@@ -2,7 +2,7 @@
 import { DIRS, K, dirIndex } from '../core/hex.js';
 import { TOP, world } from '../world/config.js';
 import { dirW, distW } from '../world/topology.js';
-import { WATER, ROAD, isLakeOrSea } from '../world/biomes.js';
+import { BIOMES, WATER, ROAD, isLakeOrSea } from '../world/biomes.js';
 import { NS_KH, edgeSlot, addPort, refineLinear } from './linear.js';
 
 export const roadRules = {
@@ -10,10 +10,10 @@ export const roadRules = {
       { key: 'towns', label: 'Поселений', min: 0, max: 16, step: 1, value: 8 }, { key: 'big', label: 'Доля крупных, %', min: 0, max: 100, step: 5, value: 25 }],
     apply(ctx) {
       const ROAD_TYPES = world.roadTypes;
-      const kh = NS_KH.roads, pass = c => c && !WATER.has(c.b), COST = { 2: 1, 3: 2, 4: 4, 5: 3, 6: 8, 7: 2, 8: 1 };
+      const kh = NS_KH.roads, pass = c => c && !WATER.has(c.b);
       const node = c => c.data[this.ns] || (c.data[this.ns] = { ports: [] });
       const towns = [];
-      for (const c of ctx.cells.filter(c => pass(c) && c.b !== 6).sort((a, b) => ctx.rand(b.q, b.r, 1) - ctx.rand(a.q, a.r, 1))) {
+      for (const c of ctx.cells.filter(c => pass(c) && BIOMES[c.b].towns !== false).sort((a, b) => ctx.rand(b.q, b.r, 1) - ctx.rand(a.q, a.r, 1))) {
         if (towns.length >= ctx.p.towns) break;
         if (towns.every(t => distW(TOP, [t.q, t.r], [c.q, c.r]) >= 4)) towns.push(c);
       }
@@ -28,7 +28,7 @@ export const roadRules = {
         while (open.length) {
           open.sort((a, b) => dist.get(a) - dist.get(b)); const x = open.shift();
           if (onRoad.has(x)) { hit = x; break; }
-          ctx.nb(x).forEach(n => { if (!pass(n)) return; const nd = dist.get(x) + (onRoad.has(n) ? 0.3 : (COST[n.b] || 2));
+          ctx.nb(x).forEach(n => { if (!pass(n)) return; const nd = dist.get(x) + (onRoad.has(n) ? 0.3 : (BIOMES[n.b].travelCost || 2));
             if (nd < (dist.has(n) ? dist.get(n) : Infinity)) { dist.set(n, nd); prev.set(n, x); if (!open.includes(n)) open.push(n); } });
         }
         if (!hit) { onRoad.add(t); continue; } // недостижимо (остров) → начало своей сети
@@ -66,12 +66,13 @@ export const roadRules = {
     apply(ctx) {
       const ROAD_TYPES = world.roadTypes;
       if (ctx.lvl < 1 || ROAD_TYPES.length < 2) return {}; // самый мелкий тип — только внизу; на 1 м хуторов нет
-      const FACT = { 2: 1, 3: 0.5, 4: 0.15, 5: 0.6, 6: 0.1, 7: 0.2, 8: 0.5 }, kh = NS_KH.roads, t = ROAD_TYPES.length - 1, w = ROAD_TYPES[t].w;
+      const kh = NS_KH.roads, t = ROAD_TYPES.length - 1, w = ROAD_TYPES[t].w;
       const target = c => !!(c.data.roads && (c.data.roads.ports || c.data.roads.band));
       const node = c => c.data[this.ns] || (c.data[this.ns] = { ports: [] });
       let n = 0;
       for (const c of ctx.cells) {
-        if (target(c) || isLakeOrSea(c) || !(c.b in FACT) || ctx.rand(c.q, c.r) >= ctx.p.rate / 100 * FACT[c.b]) continue;
+        const rate = BIOMES[c.b].hamletRate;
+        if (target(c) || isLakeOrSea(c) || rate == null || ctx.rand(c.q, c.r) >= ctx.p.rate / 100 * rate) continue;
         const prev = new Map([[c, null]]), qu = [c]; let hit = null;
         while (qu.length && !hit) { const x = qu.shift(); for (const [a, b] of DIRS) { const y = ctx.byKey.get(K(x.q + a, x.r + b)); if (!y || prev.has(y) || isLakeOrSea(y)) continue; prev.set(y, x); if (target(y)) { hit = y; break; } qu.push(y); } }
         if (!hit) continue;

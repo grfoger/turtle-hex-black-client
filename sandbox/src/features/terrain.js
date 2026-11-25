@@ -1,7 +1,7 @@
 // Рельеф и биомы: верхний уровень, смешивание родителей, вкрапления, доля родителя, правила стыков воды.
 import { SQ3, DIRS, K, toPx } from '../core/hex.js';
 import { waterComponents } from '../core/graph.js';
-import { BIOMES, SEA, FRESH, SHORE, INCL } from '../world/biomes.js';
+import { BIOMES, B, SEA, FRESH, SHORE } from '../world/biomes.js';
 
 export const terrainRules = {
   base: { id: 'top.base', stage: 'top', locked: true, name: 'Высота и влажность → биом', params: [
@@ -11,7 +11,7 @@ export const terrainRules = {
         const [x, y] = toPx(c.q, c.r);
         const e = (ctx.noise(x, y, 4, 1) - 0.5) * 1.8 + 0.5;
         const m = (ctx.noise(x, y, 5, 2) - 0.5) * 1.8 + 0.5;
-        c.b = e < ctx.p.sea ? SEA : e > ctx.p.mount ? 6 : e > ctx.p.hill ? 5 : m < 0.3 ? 7 : m < 0.5 ? 2 : (m > 0.75 && e < 0.45) ? 4 : 3;
+        c.b = e < ctx.p.sea ? SEA : e > ctx.p.mount ? B.mountains : e > ctx.p.hill ? B.hills : m < 0.3 ? B.desert : m < 0.5 ? B.meadow : (m > 0.75 && e < 0.45) ? B.swamp : B.forest;
         c.data[this.ns] = { высота: +e.toFixed(3), влажность: +m.toFixed(2) };
       }
     } },
@@ -56,12 +56,12 @@ export const terrainRules = {
 
   inclusions: { id: 'draft.inclusions', stage: 'draft', name: 'Вкрапления', params: [{ key: 'max', label: 'Макс. пятен', min: 0, max: 4, step: 1, value: 2 }],
     apply(ctx) {
-      const opts = INCL[ctx.dom]; if (!opts || !opts.length) return {};
+      const opts = BIOMES[ctx.dom].inclusions; if (!opts.length) return {};
       const rng = ctx.rng(ctx.Q, ctx.R), n = Math.floor(rng() * (ctx.p.max + 1)); let total = 0;
       for (let k = 0; k < n; k++) {
         const free = ctx.cells.filter(c => !c.data[this.ns]); if (!free.length) break;
         const t = opts[Math.floor(rng() * opts.length)], size = 3 + Math.floor(rng() * 13);
-        const mark = c => { c.b = t; c.data[this.ns] = { t, тип: BIOMES[t][0], пятно: k }; total++; };
+        const mark = c => { c.b = t; c.data[this.ns] = { t, тип: BIOMES[t].name, пятно: k }; total++; };
         const start = free[Math.floor(rng() * free.length)]; mark(start); const grown = [start];
         while (grown.length < size) {
           const front = [];
@@ -92,7 +92,7 @@ export const terrainRules = {
         const next = [];
         for (const [m, t] of front) {
           if (blocked(m) || ctx.rand(m.q, m.r, t, depth) >= P[depth]) continue;
-          m.b = t; m.data[this.ns] = { тип: BIOMES[t][0], глубина: depth + 1 }; n++;
+          m.b = t; m.data[this.ns] = { тип: BIOMES[t].name, глубина: depth + 1 }; n++;
           for (const [a, b] of DIRS) { const k = ctx.byKey.get(K(m.q + a, m.r + b)); if (k && !blocked(k)) next.push([k, t]); }
         }
         front = next;

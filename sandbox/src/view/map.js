@@ -52,7 +52,7 @@ function draw() {
   const ox = view.cx, oy = view.cy;
   svg.setAttribute('viewBox', `${-view.w / 2} ${-h / 2} ${view.w} ${h}`);
   const { cells, parents, batches } = visibleCells(); shown = cells;
-  let s = cells.map((c, i) => `<polygon points="${hexPts(c.x - ox, c.y - oy, 1)}" fill="${BIOMES[c.b][1]}" stroke="#0002" stroke-width="${(view.w / 700).toFixed(3)}" data-k="${i}"/>`).join('');
+  let s = cells.map((c, i) => `<polygon points="${hexPts(c.x - ox, c.y - oy, 1)}" fill="${BIOMES[c.b].color}" stroke="#0002" stroke-width="${(view.w / 700).toFixed(3)}" data-k="${i}"/>`).join('');
   if (view.w <= 45) s += iconsSvg(cells, ox, oy);
   s += linearSvg(cells, ox, oy, view.L) + selRing(view.L, ox, oy);
   s += parents.map(([, , px, py]) => `<polygon points="${hexPts(px - ox, py - oy, 10)}" fill="none" stroke="#222" stroke-width="${(view.w / 400).toFixed(3)}" stroke-dasharray="${view.w / 120} ${view.w / 200}" pointer-events="none"/>`).join('');
@@ -62,8 +62,8 @@ function draw() {
   let html = `Показан уровень ${view.L} (${SIZE[view.L]}). Мир — тор ${world.N}×${world.N} гексов по ${SIZE[TOP]}: кругосветка за ${world.N} шагов в любую из 6 сторон.<br>`;
   if (view.L < TOP) {
     const b = getBatch(view.L + 1, Qc, Rc), v = countViolations(batches, view.L), [wq, wr] = wrap(view.L + 1, Qc, Rc);
-    const rows = [...b.shares].sort((a, c) => c[1] - a[1]).map(([bb, n]) => `<div><span class="sw" style="background:${BIOMES[bb][1]}"></span>${BIOMES[bb][0]} — ${n}%</div>`).join('');
-    html += `Гекс в центре (ур. ${view.L + 1}, ${SIZE[view.L + 1]}, q=${wq}, r=${wr}): <b>${BIOMES[b.dom][0]}</b>${rows}${statsHtml(b.stats)}` +
+    const rows = [...b.shares].sort((a, c) => c[1] - a[1]).map(([bb, n]) => `<div><span class="sw" style="background:${BIOMES[bb].color}"></span>${BIOMES[bb].name} — ${n}%</div>`).join('');
+    html += `Гекс в центре (ур. ${view.L + 1}, ${SIZE[view.L + 1]}, q=${wq}, r=${wr}): <b>${BIOMES[b.dom].name}</b>${rows}${statsHtml(b.stats)}` +
       `<div>На экране: нарушений соседства <b>${v.total}</b> (на стыках ${v.border}), разрывов рек/дорог <b>${v.breaks}</b></div>`;
   } else html += statsHtml(getTopStats());
   info.innerHTML = html + '<div class="meta">Колесо — масштаб (с галочкой «Колесо меняет уровень» — и переход между уровнями), перетаскивание — сдвиг, клик по клетке — провалиться в неё, «▲ выше» — на уровень выше.</div>';
