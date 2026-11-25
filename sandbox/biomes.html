@@ -25,6 +25,7 @@ svg{border:1px solid #ccc;width:min(720px,100%);height:auto;background:#f6f6f6}
   <label>Сид <input id="seed" type="number" value="1" style="width:90px"></label>
   <button id="rnd">Другой сид</button>
   <button id="checkBtn">Проверить стыки (10 сидов)</button>
+  <label><input type="checkbox" id="editMode"> ✎ Править дороги</label> <select id="editType"></select> <button id="clearEdits">Сбросить правки</button> <span id="editCount" class="meta"></span>
 </div>
 <div id="check"></div>
 <div class="crumbs" id="crumbs"></div>
@@ -566,11 +567,40 @@ function generateTop() {
   topByKey = new Map(topCells.map(c => [K(c.q, c.r), c]));
   topStats = runStage('top', { lvl: TOP, cells: topCells, byKey: topByKey, nb: c => DIRS.map(([a, b]) => topByKey.get(K(c.q + a, c.r + b))) });
 }
+// ================= слой правок мастера (поверх сгенерированного мира) =================
+// 'lvl:q:r' → { roads: { [ребро]: тип | null } }. Правка ребра пишется в обе клетки — у каждого тайла свои данные.
+// Генератор видит клетки уровня выше уже с правками → ещё не открытые дети строятся из исправленного родителя.
+const EDITS = new Map(), EK = (lvl, q, r) => lvl + ':' + q + ':' + r;
+function applyEdits(lvl, c) {
+  if (!c) return c; const ed = EDITS.get(EK(lvl, c.q, c.r)); if (!ed || !ed.roads) return c;
+  const base = c.data.roads; if (base && base.band) return c;
+  const ports = (base && base.ports ? base.ports : []).filter(p => !(p.e in ed.roads));
+  for (const [e, t] of Object.entries(ed.roads)) if (t != null) ports.push({ e: +e, s: edgeSlot(lvl, c.q, c.r, +e, NS_KH.roads), size: ROAD_TYPES[t].w, io: 'both', t, правка: true });
+  return { ...c, data: { ...c.data, roads: { ...(base || {}), ports } } };
+}
+// можно ли править: внутри клетки и её соседей ещё ничего не открыто (их детей не пересчитываем)
+const childrenOpened = (lvl, c) => [[0, 0], ...DIRS].some(([a, b]) => cache.has('d' + lvl + ':' + (c.q + a) + ':' + (c.r + b)));
+function editRoad(lvl, a, b, t) {
+  const d = dirIndex([a.q, a.r], [b.q, b.r]); if (d < 0) return 'клетки не соседние';
+  if (childrenOpened(lvl, a) || childrenOpened(lvl, b)) return 'внутри этих клеток уже открывали — уже сгенерированное не меняем';
+  if ([a, b].some(c => c.data.roads && c.data.roads.band)) return 'здесь дорога полосой — её правят уровнем выше';
+  for (const [c, e] of [[a, d], [b, (d + 3) % 6]]) { const k = EK(lvl, c.q, c.r), ed = EDITS.get(k) || { roads: {} }; ed.roads[e] = t; EDITS.set(k, ed); }
+  return t == null ? 'отрезок дороги удалён' : 'проложен отрезок: ' + ROAD_TYPES[t].name;
+}
+let editSel = null; // последняя выбранная клетка в режиме правки
+function editClick(lvl, c) {
+  if (!document.getElementById('editMode').checked) return false;
+  const v = document.getElementById('editType').value, t = v === 'del' ? null : +v;
+  if (editSel && editSel.lvl === lvl && hexDist([editSel.q, editSel.r], [c.q, c.r]) === 1) status.textContent = editRoad(lvl, editSel, c, t);
+  else status.textContent = 'выбрана клетка — кликни соседнюю, чтобы проложить/удалить отрезок';
+  editSel = { lvl, q: c.q, r: c.r, data: c.data }; render(); return true;
+}
+
 const cache = new Map();
 function getCell(L, q, r) {
-  if (L === TOP) return topByKey.get(K(q, r)) || null;
+  if (L === TOP) return applyEdits(TOP, topByKey.get(K(q, r)) || null);
   const [Q, R] = parentOf(q, r);
-  return getBatch(L + 1, Q, R).byKey.get(K(q, r));
+  return applyEdits(L, getBatch(L + 1, Q, R).byKey.get(K(q, r)));
 }
 const getBiome = (L, q, r) => { const c = getCell(L, q, r); return c ? c.b : SEA; };
 function getDraft(L, Q, R) {
@@ -621,6 +651,7 @@ function countViolations(batches, lvl) {
   return { total, border, breaks };
 }
 function runSeamCheck() {
+  const savedEdits = new Map(EDITS); EDITS.clear();
   const saved = SEED; let views = 0, total = 0, border = 0, breaks = 0, orderOk = true;
   const view = (L, q, r) => [[q, r], ...DIRS.map(([a, b]) => [q + a, r + b])].map(([a, b]) => getBatch(L, a, b));
   for (let sd = 1; sd <= 10; sd++) {
@@ -635,7 +666,7 @@ function runSeamCheck() {
     cache.clear(); DIRS.forEach(([a, b]) => getBatch(TOP, t.q + a, t.r + b));
     if (A !== JSON.stringify(getBatch(TOP, t.q, t.r).cells.map(c => [c.b, c.data.rivers, c.data.roads]))) orderOk = false;
   }
-  SEED = saved; cache.clear(); generateTop();
+  SEED = saved; savedEdits.forEach((v, k) => EDITS.set(k, v)); cache.clear(); generateTop();
   const pairs = forbiddenPairs().map(([a, b]) => BIOMES[a][0] + '–' + BIOMES[b][0]).join(', ') || 'нет';
   document.getElementById('check').textContent = `Проверка: ${views} видов. Запрещённые соседства (${pairs}): ${total} (на стыках: ${border}). Разрывов рек/дорог: ${breaks}. Порядок открытия ${orderOk ? 'не влияет ✔' : 'ВЛИЯЕТ ✘'}`;
   render();
@@ -664,22 +695,24 @@ function linearSvg(cells, ox, oy, lvl) {
   return h;
 }
 let stack = [];
-function render() { renderCrumbs(); if (!stack.length) renderTop(); else renderChildren(stack[stack.length - 1]); }
+function render() { document.getElementById('editCount').textContent = EDITS.size ? 'клеток с правками: ' + EDITS.size : ''; renderCrumbs(); if (!stack.length) renderTop(); else renderChildren(stack[stack.length - 1]); }
+const selRing = (lvl, ox, oy) => { if (!editSel || editSel.lvl !== lvl || !document.getElementById('editMode').checked) return ''; const [x, y] = toPx(editSel.q, editSel.r); return `<polygon points="${hexPts(x - ox, y - oy, 0.85)}" fill="none" stroke="#e0007a" stroke-width="0.18" pointer-events="none"/>`; };
 function renderTop() {
+  const cells = topCells.map(c => applyEdits(TOP, c));
   const maxX = 1.5 * (COLS - 1) + 1, maxY = SQ3 * (ROWS - 0.5) + SQ3 / 2;
   svg.setAttribute('viewBox', `-1.2 ${-SQ3 / 2 - 0.2} ${maxX + 2.4} ${maxY + SQ3 / 2 + 0.4}`);
-  svg.innerHTML = topCells.map((c, i) => { const [x, y] = toPx(c.q, c.r); return `<polygon points="${hexPts(x, y, 1)}" fill="${BIOMES[c.b][1]}" stroke="#0003" stroke-width="0.05" data-i="${i}"/>`; }).join('') + linearSvg(topCells, 0, 0, TOP);
+  svg.innerHTML = cells.map((c, i) => { const [x, y] = toPx(c.q, c.r); return `<polygon points="${hexPts(x, y, 1)}" fill="${BIOMES[c.b][1]}" stroke="#0003" stroke-width="0.05" data-i="${i}"/>`; }).join('') + linearSvg(cells, 0, 0, TOP) + selRing(TOP, 0, 0);
   info.innerHTML = `Верхний уровень: ${COLS}×${ROWS}, гекс = ${SIZE[TOP]}.<br>Клик по гексу — провалиться внутрь.${statsHtml(topStats)}`;
-  svg.onclick = e => { const i = e.target.dataset.i; if (i == null) return; const c = topCells[+i]; stack.push({ L: TOP, Q: c.q, R: c.r, label: c.col + ',' + c.row }); render(); };
-  svg.onmousemove = e => { const i = e.target.dataset.i; if (i == null) return; const c = topCells[+i]; status.textContent = cellText(TOP, c, `столбец ${c.col}, строка ${c.row}`); };
+  svg.onclick = e => { const i = e.target.dataset.i; if (i == null) return; const c = cells[+i]; if (editClick(TOP, c)) return; stack.push({ L: TOP, Q: c.q, R: c.r, label: c.col + ',' + c.row }); render(); };
+  svg.onmousemove = e => { const i = e.target.dataset.i; if (i == null) return; const c = cells[+i]; status.textContent = cellText(TOP, c, `столбец ${c.col}, строка ${c.row}`); };
 }
 function renderChildren({ L, Q, R }) {
   const [px, py] = toPx(Q, R, 10);
   svg.setAttribute('viewBox', '-28 -27 56 54');
-  const parents = [[Q, R], ...DIRS.map(([a, b]) => [Q + a, R + b])], batches = parents.map(([a, b]) => getBatch(L, a, b));
+  const parents = [[Q, R], ...DIRS.map(([a, b]) => [Q + a, R + b])], batches = parents.map(([a, b]) => getBatch(L, a, b)).map(b => ({ ...b, cells: b.cells.map(c => applyEdits(L - 1, c)) }));
   let h = '';
   batches.forEach((batch, i) => { for (const c of batch.cells) h += `<polygon points="${hexPts(c.x - px, c.y - py, 1)}" fill="${BIOMES[c.b][1]}" stroke="#0002" stroke-width="0.05" opacity="${i ? 0.45 : 1}" data-p="${i}" data-k="${c.idx}"/>`; });
-  h += linearSvg(batches.flatMap(b => b.cells), px, py, L - 1);
+  h += linearSvg(batches.flatMap(b => b.cells), px, py, L - 1) + selRing(L - 1, px, py);
   parents.forEach(([pq, pr], i) => { const [x, y] = toPx(pq, pr, 10); h += `<polygon points="${hexPts(x - px, y - py, 10)}" fill="none" stroke="#222" stroke-width="${i ? 0.08 : 0.2}" stroke-dasharray="0.6 0.4" pointer-events="none"/>`; });
   svg.innerHTML = h;
   const b = batches[0], v = countViolations(batches, L - 1);
@@ -688,6 +721,7 @@ function renderChildren({ L, Q, R }) {
     `<div>Нарушений соседства на экране: <b>${v.total}</b> (на стыках: ${v.border}), разрывов рек/дорог: <b>${v.breaks}</b></div><div class="meta">Клик по яркой клетке — глубже, по бледной — в соседний гекс.</div>`;
   svg.onclick = e => {
     const d = e.target.dataset; if (d.p == null) return; const c = batches[+d.p].cells[+d.k];
+    if (editClick(L - 1, c)) return;
     if (+d.p === 0) { if (L - 1 >= 1) { stack.push({ L: L - 1, Q: c.q, R: c.r, label: '#' + c.idx }); render(); } }
     else { const top = stack[stack.length - 1]; stack[stack.length - 1] = { L, Q: parents[+d.p][0], R: parents[+d.p][1], label: top.label + '→' + DIRS_RU[+d.p - 1] }; render(); }
   };
@@ -728,6 +762,7 @@ document.getElementById('legend').innerHTML = BIOMES.map(([n, c]) => `<div><span
   '<div class="meta">Линии: синие — реки и ручьи (○ — родник), коричневые — дороги, толщина по типу (красный ● — поселение, крупнее = больше; коричневый ● — хутор)</div>';
 function renderRoadTypes() {
   const el = document.getElementById('roadTypes');
+  fillEditTypes();
   el.innerHTML = ROAD_TYPES.map((t, i) => `<div class="rule" style="display:flex;gap:6px;align-items:center">${i + 1}. <input data-rt="${i}" data-f="name" value="${t.name}" style="width:110px"> ширина <input data-rt="${i}" data-f="w" type="number" min="0.5" step="0.5" value="${t.w}" style="width:60px"> м <button data-rdel="${i}" ${ROAD_TYPES.length < 2 ? 'disabled' : ''}>✕</button></div>`).join('') + '<button id="rtAdd">+ тип</button>';
 }
 document.getElementById('roadTypes').addEventListener('change', e => { const d = e.target.dataset; if (d.rt == null) return; const t = ROAD_TYPES[+d.rt]; if (d.f === 'w') t.w = Math.max(0.5, +e.target.value || 1); else t.name = e.target.value || t.name; regen(false); });
@@ -738,12 +773,15 @@ document.getElementById('roadTypes').addEventListener('click', e => {
   else return;
   renderRoadTypes(); regen(false);
 });
+function fillEditTypes() { const el = document.getElementById('editType'), v = el.value; el.innerHTML = ROAD_TYPES.map((t, i) => `<option value="${i}">${t.name} (${t.w} м)</option>`).join('') + '<option value="del">✕ Удалить отрезок</option>'; if ([...el.options].some(o => o.value === v)) el.value = v; }
+document.getElementById('editMode').onchange = () => { editSel = null; render(); };
+document.getElementById('clearEdits').onclick = () => { EDITS.clear(); editSel = null; regen(false); };
 function regen(redrawRules = true) {
   SEED = +document.getElementById('seed').value | 0;
   cache.clear(); generateTop(); if (redrawRules) renderRules(); render();
 }
-document.getElementById('seed').addEventListener('input', () => regen(false));
-document.getElementById('rnd').onclick = () => { document.getElementById('seed').value = Math.floor(Math.random() * 100000); regen(false); };
+document.getElementById('seed').addEventListener('input', () => { EDITS.clear(); editSel = null; regen(false); }); // правки принадлежат миру (сиду)
+document.getElementById('rnd').onclick = () => { document.getElementById('seed').value = Math.floor(Math.random() * 100000); EDITS.clear(); editSel = null; regen(false); };
 document.getElementById('checkBtn').onclick = () => { document.getElementById('check').textContent = 'Проверяю…'; setTimeout(runSeamCheck, 20); };
 renderRoadTypes();
 regen();
