@@ -9,18 +9,18 @@ svg{border:1px solid #ccc;width:min(720px,100%);height:auto;background:#f6f6f6}
 #svg polygon:hover{stroke:#000;stroke-width:.15}
 .side{font-size:13px;width:340px;max-width:100%}
 .legend span,.sw{display:inline-block;width:11px;height:11px;margin-right:6px;vertical-align:middle;border:1px solid #0003}
-#status{min-height:36px;font-size:13px;margin:6px 0;font-family:monospace;white-space:pre-wrap}
+#status{min-height:36px;font-size:13px;margin:6px 0;font-family:monospace;white-space:pre-wrap;word-break:break-all}
 .stage{margin:8px 0 2px;font-weight:bold}
 .rule{border:1px solid #ddd;border-radius:4px;padding:4px 6px;margin:3px 0}
 .rule .head{display:flex;align-items:center;gap:6px}
 .rule .head span{flex:1}
 .rule .head button{padding:0 5px}
-.rule .meta{color:#888;font-size:11px}
+.meta{color:#888;font-size:11px}
 .rule label{display:flex;gap:6px;align-items:center;font-size:12px;margin-top:2px}
 .rule input[type=range]{flex:1}
 #check{font-size:13px;white-space:pre-wrap}
 </style></head><body>
-<h3>Песочница биомов — конвейер правил</h3>
+<h3>Песочница карты — конвейер правил</h3>
 <div class="controls">
   <label>Сид <input id="seed" type="number" value="1" style="width:90px"></label>
   <button id="rnd">Другой сид</button>
@@ -47,6 +47,7 @@ function cubeRound(fq, fr) {
   const dq = Math.abs(q - fq), dr = Math.abs(r - fr), ds = Math.abs(s - fs);
   if (dq > dr && dq > ds) q = -r - s; else if (dr > ds) r = -q - s; return [q, r];
 }
+const childRound = (x, y) => cubeRound(2 / 3 * x, -x / 3 + SQ3 / 3 * y); // точка → гекс (размер 1)
 function parentOf(q, r) {
   const [x, y] = toPx(q, r), S = 10;
   const [Q0, R0] = cubeRound((2 / 3 * x) / S, (-x / 3 + SQ3 / 3 * y) / S);
@@ -61,6 +62,14 @@ for (let q = -10; q <= 10; q++) for (let r = -10; r <= 10; r++) { const [Q, R] =
 CHILD_OFFSETS.sort((a, b) => (2 * a[1] + a[0]) - (2 * b[1] + b[0]) || a[0] - b[0]); // построчно
 const RING2 = []; for (let a = -2; a <= 2; a++) for (let b = Math.max(-2, -a - 2); b <= Math.min(2, -a + 2); b++) RING2.push([a, b]);
 const K = (q, r) => q + ',' + r;
+const hexDist = (a, b) => (Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[0] + a[1] - b[0] - b[1])) / 2;
+const dirIndex = (a, b) => DIRS.findIndex(([x, y]) => a[0] + x === b[0] && a[1] + y === b[1]);
+const unitDir = e => { const [x, y] = toPx(DIRS[e][0], DIRS[e][1]); return [x / SQ3, y / SQ3]; };
+function hexLine(a, b) {
+  const n = hexDist(a, b), res = [];
+  for (let i = 0; i <= n; i++) { const t = n ? i / n : 0; res.push(cubeRound(a[0] + (b[0] - a[0]) * t + 1e-6, a[1] + (b[1] - a[1]) * t + 1e-6)); }
+  return res;
+}
 
 // ================= случайность (детерминирована от сида) =================
 let SEED = 1;
@@ -83,16 +92,160 @@ const fbm = (x, y, a, b, c) => 0.65 * vnoise(x, y, a, b, c * 2) + 0.35 * vnoise(
 const BIOMES = [
   ['Океан', '#2f5f98'], ['Озеро', '#5b9bd5'], ['Луга', '#b9d77a'], ['Лес', '#4f8a3c'],
   ['Болото', '#6f7f52'], ['Холмы', '#b49a64'], ['Горы', '#8a8580'], ['Пустыня', '#e6d08a'], ['Берег', '#f3ead0'],
+  ['Река', '#3d7fd6'], ['Дорога', '#8d7b68'],
 ];
-const OCEAN = 0, LAKE = 1, SHORE = 8;
-const INCL = { 0: [2], 1: [2], 2: [3, 1, 5, 4], 3: [1, 2, 4, 5], 4: [1, 3], 5: [3, 2, 6, 1], 6: [5, 1], 7: [5, 2, 1], 8: [2] };
+const OCEAN = 0, LAKE = 1, SHORE = 8, RIVER = 9, ROAD = 10;
+const WATER = new Set([OCEAN, LAKE, RIVER]);
+const INCL = { 0: [2], 1: [2], 2: [3, 1, 5, 4], 3: [1, 2, 4, 5], 4: [1, 3], 5: [3, 2, 6, 1], 6: [5, 1], 7: [5, 2, 1], 8: [2], 9: [], 10: [] };
 const SIZE = ['1 м', '10 м', '100 м', '1 км', '10 км'];
 const TOP = 4, COLS = 16, ROWS = 10;
 const topAxial = (col, row) => [col, row - ((col - (col & 1)) / 2)];
 
+// ================= линейные объекты: реки и дороги =================
+// Узел в клетке: data[ns] = { ports: [{e: ребро 0..5, s: слот -1|0|1, size: ширина в метрах, io: in|out|both}], town? }
+// или полоса: data[ns] = { band: true, size, segs: [{size, pts}] } — когда объект шире порога для масштаба клетки.
+const NS_KH = { rivers: strHash('rivers'), roads: strHash('roads') };
+// слот на ребре: хэш КАНОНИЧЕСКОГО ребра (владелец + своё ребро) → обе стороны получают одно и то же
+function canonEdge(q, r, e) { return OWNED.has(e) ? [q, r, e] : [q + DIRS[e][0], r + DIRS[e][1], (e + 3) % 6]; }
+function edgeSlot(lvl, q, r, e, kh) { const [cq, cr, ce] = canonEdge(q, r, e); return Math.floor(hash(kh, lvl, cq, cr, ce, 991) * 3) - 1; }
+// точка стыковки на ребре: середина ребра ± 0.3 длины. При size=10 (родитель в координатах детей) это ровно центр ребёнка на ребре.
+function portXY(q, r, e, s, size) {
+  const [cq, cr, ce] = canonEdge(q, r, e);
+  const [cx, cy] = toPx(cq, cr, size), [nx, ny] = toPx(cq + DIRS[ce][0], cr + DIRS[ce][1], size);
+  const len = Math.hypot(nx - cx, ny - cy), ux = (nx - cx) / len, uy = (ny - cy) / len;
+  return [(cx + nx) / 2 - uy * 0.3 * size * s, (cy + ny) / 2 + ux * 0.3 * size * s];
+}
+function addPort(nd, e, s, size, io) { const ex = nd.ports.find(p => p.e === e); if (ex) { ex.size = Math.max(ex.size, size); return; } nd.ports.push({ e, s, size, io }); }
+function curvePts([ax, ay], [bx, by], tA, tB, amp, kh, pid, lc, idx) {
+  const d = Math.hypot(bx - ax, by - ay), k = 0.35 * d + 1, nx = -(by - ay) / (d || 1), ny = (bx - ax) / (d || 1);
+  const p1 = [ax + tA[0] * k, ay + tA[1] * k], p2 = [bx - tB[0] * k, by - tB[1] * k], pts = [], N = Math.max(8, Math.ceil(d * 4));
+  for (let i = 0; i <= N; i++) {
+    const t = i / N, u = 1 - t;
+    const x = u * u * u * ax + 3 * u * u * t * p1[0] + 3 * u * t * t * p2[0] + t * t * t * bx;
+    const y = u * u * u * ay + 3 * u * u * t * p1[1] + 3 * u * t * t * p2[1] + t * t * t * by;
+    const off = amp * Math.sin(Math.PI * t) * (2 * vnoise(t * 3, idx, kh, pid, lc) - 1);
+    pts.push([x + nx * off, y + ny * off]);
+  }
+  return pts;
+}
+function removeLoops(cells) {
+  const res = [], idx = new Map();
+  for (const c of cells) {
+    const k = K(c[0], c[1]);
+    if (idx.has(k)) { for (const r of res.splice(idx.get(k) + 1)) idx.delete(K(r[0], r[1])); continue; }
+    idx.set(k, res.length); res.push(c);
+  }
+  return res;
+}
+function rasterize(pts) {
+  const out = [];
+  for (const [x, y] of pts) {
+    const c = childRound(x, y), last = out[out.length - 1];
+    if (last && last[0] === c[0] && last[1] === c[1]) continue;
+    if (last && hexDist(last, c) > 1) for (const m of hexLine(last, c).slice(1, -1)) out.push(m);
+    out.push(c);
+  }
+  return removeLoops(out);
+}
+function segDist(x, y, pts) {
+  let best = Infinity;
+  for (let i = 0; i < pts.length; i++) {
+    const [ax, ay] = pts[i], [bx, by] = pts[Math.min(i + 1, pts.length - 1)], dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+    const t = l2 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l2)) : 0;
+    best = Math.min(best, Math.hypot(x - ax - t * dx, y - ay - t * dy));
+  }
+  return best;
+}
+function windowPts(pts, x, y, r) {
+  let i0 = -1, i1 = -1; pts.forEach(([px, py], i) => { if (Math.hypot(px - x, py - y) <= r) { if (i0 < 0) i0 = i; i1 = i; } });
+  if (i0 < 0) return [];
+  return pts.slice(Math.max(0, i0 - 1), i1 + 2).map(([a, b]) => [+a.toFixed(2), +b.toFixed(2)]);
+}
+// Осевые кривые и цепочки клеток для узла родителя (Q,R). Всё в координатах уровня детей lc.
+// Через точку стыковки кривая проходит поперёк ребра: [снаружи, на ребре, внутри] — у обоих соседей одинаково.
+function buildChains(lc, Q, R, node, kh, meander, ownedFn) {
+  const [px, py] = toPx(Q, R, 10);
+  const J = childRound(px + (hash(kh, lc, Q, R, 31) - 0.5) * 5, py + (hash(kh, lc, Q, R, 32) - 0.5) * 5);
+  const ports = node.ports.map(p => { const pc = childRound(...portXY(Q, R, p.e, p.s, 10)), [dq, dr] = DIRS[p.e];
+    return { ...p, pc, inner: [pc[0] - dq, pc[1] - dr], outer: [pc[0] + dq, pc[1] + dr] }; });
+  const ins = ports.filter(p => p.io === 'in'), out = ports.find(p => p.io === 'out'), both = ports.filter(p => p.io === 'both');
+  const specs = [];
+  if (both.length) { if (both.length === 2 && !node.town) specs.push([both[0], both[1], Math.max(both[0].size, both[1].size)]); else both.forEach(p => specs.push([p, null, p.size])); }
+  else if (out && ins.length === 1) specs.push([ins[0], out, out.size]);
+  else { if (out) specs.push([null, out, out.size]); ins.forEach(p => specs.push([p, null, p.size])); }
+  let fail = 0;
+  const chains = specs.map(([a, b, size], idx) => {
+    const start = a ? a.inner : J, end = b ? b.inner : J, S0 = toPx(...start), E0 = toPx(...end);
+    const cl = Math.hypot(E0[0] - S0[0], E0[1] - S0[1]) || 1, cu = [(E0[0] - S0[0]) / cl, (E0[1] - S0[1]) / cl];
+    const tA = a ? unitDir((a.e + 3) % 6) : cu, tB = b ? unitDir(b.e) : cu;
+    const pre = a ? [a.outer, a.pc] : [], post = b ? [b.pc, b.outer] : [];
+    const attempt = amp => { const pts = curvePts(S0, E0, tA, tB, amp, kh, Q * 7919 + R, lc, idx); return { pts, cells: removeLoops([...pre, ...rasterize(pts), ...post]) }; };
+    const ok = cells => cells.slice(pre.length, cells.length - post.length).every(c => ownedFn(c[0], c[1]));
+    let r = attempt(meander);
+    if (!ok(r.cells)) r = attempt(0);
+    if (!ok(r.cells)) { const cells = removeLoops([...pre, ...hexLine(start, end), ...post]); r = { pts: cells.slice(pre.length, cells.length - post.length).map(c => toPx(...c)), cells }; if (!ok(cells)) fail++; }
+    return { cells: r.cells, size, pts: [...pre.map(c => toPx(...c)), ...r.pts, ...post.map(c => toPx(...c))] };
+  });
+  return { chains, J, fail };
+}
+// Общий шаг «линия родителя → дети»: цепочки (если объект ýже порога) или полоса клеток (если шире).
+function refineLinear(ctx, ns, bandBiome, P) {
+  const lc = ctx.lvl, kh = NS_KH[ns], scale = Math.pow(10, lc);
+  const isBand = size => size >= P.K * scale, halfW = size => size / scale; // ширина гекса = 2 единицы
+  const own = (q, r) => ctx.byKey.get(K(q, r));
+  const node = c => c.data[ns] || (c.data[ns] = { ports: [] });
+  const segs = [], lineChains = []; let fail = 0, J = null, town = false;
+  for (const [a, b] of [[0, 0], ...DIRS]) {
+    const pq = ctx.Q + a, pr = ctx.R + b, above = ctx.cellAbove(pq, pr), nd = above && above.data[ns];
+    if (!nd) continue;
+    const mine = a === 0 && b === 0;
+    if (nd.ports) {
+      const res = buildChains(lc, pq, pr, nd, kh, P.meander, (q, r) => { const [x, y] = parentOf(q, r); return x === pq && y === pr; });
+      if (mine) { fail = res.fail; J = res.J; town = !!nd.town; }
+      for (const ch of res.chains) { if (isBand(ch.size)) segs.push({ size: ch.size, pts: ch.pts, cells: mine ? ch.cells : null }); else if (mine) lineChains.push(ch); }
+    }
+    if (nd.segs) for (const s of nd.segs) segs.push({ size: s.size, pts: s.pts.map(([x, y]) => [x * 10, y * 10]) });
+  }
+  // полоса: свои клетки ближе половины ширины к любой оси (своей или соседской — считается одинаково по обе стороны границы)
+  const band = new Map(), put = (c, size) => band.set(c, Math.max(band.get(c) || 0, size));
+  for (const s of segs) if (s.cells) for (const c of s.cells) { const m = own(c[0], c[1]); if (m) put(m, s.size); }
+  for (const c of ctx.cells) for (const s of segs) if (segDist(c.x, c.y, s.pts) <= halfW(s.size)) put(c, s.size);
+  for (const [c, size] of band) {
+    c.b = bandBiome;
+    const near = segs.map(s => ({ size: s.size, pts: windowPts(s.pts, c.x, c.y, halfW(s.size) + 3) })).filter(s => s.pts.length);
+    c.data[ns] = { band: true, size, segs: near };
+  }
+  // смешивание могло дать «реку/дорогу» там, где полосы нет → лучший другой биом
+  for (const c of ctx.cells) if (c.b === bandBiome && !band.has(c)) {
+    const alt = (c.base || []).filter(([b]) => b !== RIVER && b !== ROAD).sort((a, b) => b[1] - a[1])[0];
+    c.b = alt ? alt[0] : (ctx.dom === RIVER || ctx.dom === ROAD ? 2 : ctx.dom);
+  }
+  // линии: цепочки клеток, у каждой клетки — свои точки стыковки с соседями по цепочке
+  const used = new Set(band.keys()), io = ns === 'rivers' ? ['out', 'in'] : ['both', 'both'];
+  for (const ch of lineChains) {
+    let prev = null;
+    for (const cc of ch.cells) {
+      const cur = own(cc[0], cc[1]);
+      if (prev) {
+        const d = dirIndex(prev, cc);
+        if (d >= 0) {
+          const s = edgeSlot(lc, prev[0], prev[1], d, kh), pa = own(prev[0], prev[1]);
+          if (pa && !band.has(pa)) addPort(node(pa), d, s, ch.size, io[0]);
+          if (cur && !band.has(cur)) addPort(node(cur), (d + 3) % 6, s, ch.size, io[1]);
+        }
+        if (cur && used.has(cur)) break; // влились в уже проложенную ветку или полосу
+      }
+      if (cur) used.add(cur);
+      prev = cc;
+    }
+  }
+  if (town && J) { const j = own(J[0], J[1]); if (j && !band.has(j)) node(j).town = true; }
+  const st = { ветвей: lineChains.length, 'клеток полосы': band.size }; if (fail) st['ошибок трассировки'] = fail; return st;
+}
+
 // ================= ПРАВИЛА =================
 // stage: top — вся карта верхнего уровня; draft — своя пачка + уровень выше; final — своя пачка + ЧЕРНОВИКИ 6 соседей (только чтение).
-// Каждое правило пишет доп. данные только в c.data[rule.id]. Случайность у каждого правила своя (rand/rng/noise).
+// ns — пространство имён в c.data, куда правило пишет (по умолчанию = id). Случайность у каждого правила своя.
 // forbids — пары биомов, которые не должны соседствовать; их проверяет общая проверка стыков.
 const RULES = [
   { id: 'top.base', stage: 'top', locked: true, name: 'Высота и влажность → биом', params: [],
@@ -104,7 +257,7 @@ const RULES = [
         e *= 0.5 + 0.5 * fall;
         const m = (ctx.noise(x / 5, y / 5, 2) - 0.5) * 1.8 + 0.5;
         c.b = e < 0.33 ? OCEAN : e > 0.72 ? 6 : e > 0.62 ? 5 : m < 0.3 ? 7 : m < 0.5 ? 2 : (m > 0.75 && e < 0.45) ? 4 : 3;
-        c.data[this.id] = { высота: +e.toFixed(2), влажность: +m.toFixed(2) };
+        c.data[this.ns] = { высота: +e.toFixed(3), влажность: +m.toFixed(2) };
       }
     } },
   { id: 'top.neighbors', stage: 'top', name: 'Соседи повышают шанс своего биома', params: [{ key: 'chance', label: 'Сила', min: 0, max: 0.5, step: 0.05, value: 0.25 }],
@@ -125,10 +278,64 @@ const RULES = [
       let lakes = 0;
       for (const comp of comps) {
         if (comp === main || comp.edge || comp.cells.length > ctx.p.maxSize) continue;
-        for (const c of comp.cells) { c.b = LAKE; c.data[this.id] = { вода: 'пресная', размер: comp.cells.length }; }
+        for (const c of comp.cells) { c.b = LAKE; c.data[this.ns] = { вода: 'пресная', размер: comp.cells.length }; }
         lakes++;
       }
       return { озёр: lakes };
+    } },
+  { id: 'top.rivers', ns: 'rivers', stage: 'top', name: 'Реки: стекание по высоте', params: [
+      { key: 'sources', label: 'Истоков, %', min: 0, max: 40, step: 1, value: 15 }, { key: 'k', label: 'Ширина на ед. расхода, м', min: 2, max: 40, step: 1, value: 12 }],
+    apply(ctx) {
+      const kh = NS_KH.rivers, elev = c => c ? (c.data['top.base'] ? c.data['top.base'].высота : 0.5) : -1, water = c => c && WATER.has(c.b);
+      const down = new Map(); let pits = 0;
+      const sources = ctx.cells.filter(c => !water(c) && elev(c) > 0.5 && ctx.rand(c.q, c.r) < ctx.p.sources / 100).sort((a, b) => elev(b) - elev(a));
+      for (const s of sources) {
+        let cur = s;
+        while (cur && !water(cur) && !down.has(cur)) {
+          let best = null, bd = -1, be = elev(cur);
+          ctx.nb(cur).forEach((n, d) => { const e = elev(n); if (e < be) { be = e; best = n; bd = d; } }); // за краем карты — океан
+          if (bd < 0) { if (cur !== s) { cur.b = LAKE; pits++; } break; } // яма → озеро
+          down.set(cur, { d: bd, next: best }); cur = best;
+        }
+      }
+      const order = [...down.keys()].sort((a, b) => elev(b) - elev(a)), flow = new Map(order.map(c => [c, 1]));
+      for (const c of order) { const nx = down.get(c).next; if (nx && down.has(nx)) flow.set(nx, flow.get(nx) + flow.get(c)); }
+      const node = c => c.data[this.ns] || (c.data[this.ns] = { ports: [] });
+      for (const c of order) {
+        const { d, next } = down.get(c), s = edgeSlot(TOP, c.q, c.r, d, kh), size = Math.round(ctx.p.k * Math.pow(flow.get(c), 1.2));
+        addPort(node(c), d, s, size, 'out');
+        if (next) addPort(node(next), (d + 3) % 6, s, size, 'in'); // в т.ч. водоём-приёмник: там река заканчивается
+      }
+      return { истоков: sources.length, 'клеток с рекой': order.length, 'ям → озёр': pits };
+    } },
+  { id: 'top.roads', ns: 'roads', stage: 'top', name: 'Дороги между городами', params: [
+      { key: 'towns', label: 'Городов', min: 0, max: 12, step: 1, value: 6 }, { key: 'size', label: 'Ширина, м', min: 3, max: 40, step: 1, value: 12 }],
+    apply(ctx) {
+      const kh = NS_KH.roads, pass = c => c && !WATER.has(c.b), COST = { 2: 1, 3: 2, 4: 4, 5: 3, 6: 8, 7: 2, 8: 1 };
+      const node = c => c.data[this.ns] || (c.data[this.ns] = { ports: [] });
+      const towns = [];
+      for (const c of ctx.cells.filter(c => pass(c) && c.b !== 6).sort((a, b) => ctx.rand(b.q, b.r, 1) - ctx.rand(a.q, a.r, 1))) {
+        if (towns.length >= ctx.p.towns) break;
+        if (towns.every(t => hexDist([t.q, t.r], [c.q, c.r]) >= 4)) towns.push(c);
+      }
+      towns.forEach(t => { node(t).town = true; });
+      const onRoad = new Set(towns.slice(0, 1)); let roads = 0;
+      for (const t of towns.slice(1)) {
+        const dist = new Map([[t, 0]]), prev = new Map(), open = [t]; let hit = null;
+        while (open.length) {
+          open.sort((a, b) => dist.get(a) - dist.get(b)); const x = open.shift();
+          if (onRoad.has(x)) { hit = x; break; }
+          ctx.nb(x).forEach(n => { if (!pass(n)) return; const nd = dist.get(x) + (onRoad.has(n) ? 0.3 : (COST[n.b] || 2));
+            if (nd < (dist.has(n) ? dist.get(n) : Infinity)) { dist.set(n, nd); prev.set(n, x); if (!open.includes(n)) open.push(n); } });
+        }
+        if (!hit) continue;
+        for (let x = hit; x !== t; x = prev.get(x)) {
+          const p = prev.get(x), d = dirIndex([p.q, p.r], [x.q, x.r]), s = edgeSlot(TOP, p.q, p.r, d, kh);
+          addPort(node(p), d, s, ctx.p.size, 'both'); addPort(node(x), (d + 3) % 6, s, ctx.p.size, 'both'); onRoad.add(x); onRoad.add(p);
+        }
+        onRoad.add(t); roads++;
+      }
+      return { городов: towns.length, дорог: roads };
     } },
   { id: 'draft.blend', stage: 'draft', locked: true, name: 'Смешивание родителей + изгиб + шум', params: [
       { key: 'amp', label: 'Шум', min: 0, max: 1.5, step: 0.05, value: 0.4 }, { key: 'warp', label: 'Изгиб границ', min: 0, max: 16, step: 1, value: 8 }],
@@ -144,15 +351,16 @@ const RULES = [
     } },
   { id: 'draft.inclusions', stage: 'draft', name: 'Вкрапления', params: [{ key: 'max', label: 'Макс. пятен', min: 0, max: 4, step: 1, value: 2 }],
     apply(ctx) {
-      const rng = ctx.rng(ctx.Q, ctx.R), n = Math.floor(rng() * (ctx.p.max + 1)), opts = INCL[ctx.dom]; let total = 0;
+      const opts = INCL[ctx.dom]; if (!opts || !opts.length) return {};
+      const rng = ctx.rng(ctx.Q, ctx.R), n = Math.floor(rng() * (ctx.p.max + 1)); let total = 0;
       for (let k = 0; k < n; k++) {
-        const free = ctx.cells.filter(c => !c.data[this.id]); if (!free.length) break;
+        const free = ctx.cells.filter(c => !c.data[this.ns]); if (!free.length) break;
         const t = opts[Math.floor(rng() * opts.length)], size = 3 + Math.floor(rng() * 13);
-        const mark = c => { c.b = t; c.data[this.id] = { t, тип: BIOMES[t][0], пятно: k }; total++; };
+        const mark = c => { c.b = t; c.data[this.ns] = { t, тип: BIOMES[t][0], пятно: k }; total++; };
         const start = free[Math.floor(rng() * free.length)]; mark(start); const grown = [start];
         while (grown.length < size) {
           const front = [];
-          for (const g of grown) for (const [a, b] of DIRS) { const c = ctx.byKey.get(K(g.q + a, g.r + b)); if (c && !c.data[this.id] && !front.includes(c)) front.push(c); }
+          for (const g of grown) for (const [a, b] of DIRS) { const c = ctx.byKey.get(K(g.q + a, g.r + b)); if (c && !c.data[this.ns] && !front.includes(c)) front.push(c); }
           if (!front.length) break; const c = front[Math.floor(rng() * front.length)]; mark(c); grown.push(c);
         }
       }
@@ -166,18 +374,50 @@ const RULES = [
       if (assign(0) < need) { let lo = 0, hi = 4; for (let i = 0; i < 16; i++) { const mid = (lo + hi) / 2; if (assign(mid) >= need) hi = mid; else lo = mid; } delta = hi; assign(hi); }
       return { надбавка: +delta.toFixed(3) };
     } },
+  { id: 'draft.rivers', ns: 'rivers', stage: 'draft', name: 'Реки родителя → цепочки / полосы детей', params: [
+      { key: 'meander', label: 'Извилистость', min: 0, max: 5, step: 0.25, value: 2.5 }, { key: 'K', label: 'Порог полосы (ширина / клетка)', min: 0.2, max: 2, step: 0.1, value: 0.5 }],
+    apply(ctx) { return refineLinear(ctx, 'rivers', RIVER, ctx.p); } },
+  { id: 'draft.roads', ns: 'roads', stage: 'draft', name: 'Дороги родителя → цепочки / полосы детей', params: [
+      { key: 'meander', label: 'Извилистость', min: 0, max: 5, step: 0.25, value: 0.75 }, { key: 'K', label: 'Порог полосы (ширина / клетка)', min: 0.2, max: 2, step: 0.1, value: 0.5 }],
+    apply(ctx) { return refineLinear(ctx, 'roads', ROAD, ctx.p); } },
+  { id: 'draft.springs', ns: 'rivers', stage: 'draft', name: 'Родники и ручьи (внутри гекса)', params: [
+      { key: 'rate', label: 'Частота, %', min: 0, max: 5, step: 0.1, value: 1 }, { key: 'maxLen', label: 'Макс. длина, клеток', min: 3, max: 30, step: 1, value: 15 }],
+    apply(ctx) {
+      const size = { 3: 20, 2: 4, 1: 1 }[ctx.lvl]; if (!size) return {}; // ручьи «своего» масштаба; на 1 м не появляются
+      const FACT = { 2: 0.6, 3: 1, 4: 1.5, 5: 1.2, 6: 1.5, 7: 0.05, 8: 0.3 }, kh = NS_KH.rivers;
+      const water = c => WATER.has(c.b), target = c => water(c) || !!(c.data.rivers && (c.data.rivers.ports || c.data.rivers.band));
+      const node = c => c.data[this.ns] || (c.data[this.ns] = { ports: [] });
+      let n = 0;
+      for (const c of ctx.cells) {
+        if (target(c) || !(c.b in FACT) || ctx.rand(c.q, c.r) >= ctx.p.rate / 100 * FACT[c.b]) continue;
+        const prev = new Map([[c, null]]), qu = [c]; let hit = null;
+        while (qu.length && !hit) { const x = qu.shift(); for (const [a, b] of DIRS) { const y = ctx.byKey.get(K(x.q + a, x.r + b)); if (!y || prev.has(y)) continue; prev.set(y, x); if (target(y)) { hit = y; break; } qu.push(y); } }
+        if (!hit) continue;
+        const path = []; for (let x = hit; x; x = prev.get(x)) path.unshift(x);
+        if (path.length - 1 > ctx.p.maxLen) continue;
+        node(path[0]).spring = true;
+        for (let i = 0; i < path.length - 1; i++) {
+          const a = path[i], b = path[i + 1], d = dirIndex([a.q, a.r], [b.q, b.r]), s = edgeSlot(ctx.lvl, a.q, a.r, d, kh);
+          addPort(node(a), d, s, size, 'out');
+          if (!(b.data.rivers && b.data.rivers.band)) addPort(node(b), (d + 3) % 6, s, size, 'in'); // впадает в реку или водоём
+        }
+        n++;
+      }
+      return { родников: n };
+    } },
   { id: 'final.continue', stage: 'final', name: 'Продолжение пятен соседа через границу', params: [{ key: 'strength', label: 'Сила', min: 0, max: 1.2, step: 0.05, value: 1 }],
     apply(ctx) {
       const inc = 'draft.inclusions', P = [0.85, 0.55, 0.3].map(v => Math.min(1, v * ctx.p.strength));
+      const blocked = m => m.data[this.ns] || m.data[inc] || (m.data.rivers && m.data.rivers.band) || (m.data.roads && m.data.roads.band);
       let front = [], n = 0;
       for (const d of ctx.neighborDrafts) for (const c of d.cells) { const di = c.data[inc]; if (!di) continue;
         for (const [a, b] of DIRS) { const m = ctx.byKey.get(K(c.q + a, c.r + b)); if (m && !m.data[inc]) front.push([m, di.t]); } }
       for (let depth = 0; depth < P.length && front.length; depth++) {
         const next = [];
         for (const [m, t] of front) {
-          if (m.data[this.id] || m.data[inc] || ctx.rand(m.q, m.r, t, depth) >= P[depth]) continue;
-          m.b = t; m.data[this.id] = { тип: BIOMES[t][0], глубина: depth + 1 }; n++;
-          for (const [a, b] of DIRS) { const k = ctx.byKey.get(K(m.q + a, m.r + b)); if (k && !k.data[this.id] && !k.data[inc]) next.push([k, t]); }
+          if (blocked(m) || ctx.rand(m.q, m.r, t, depth) >= P[depth]) continue;
+          m.b = t; m.data[this.ns] = { тип: BIOMES[t][0], глубина: depth + 1 }; n++;
+          for (const [a, b] of DIRS) { const k = ctx.byKey.get(K(m.q + a, m.r + b)); if (k && !blocked(k)) next.push([k, t]); }
         }
         front = next;
       }
@@ -189,7 +429,7 @@ const RULES = [
       let lakes = 0;
       for (const comp of comps) {
         if (comp.edge || comp.cells.length > ctx.p.maxSize) continue; // касается края → не знаем, куда ведёт → остаётся океаном
-        for (const c of comp.cells) { c.b = LAKE; c.data[this.id] = { вода: 'пресная', размер: comp.cells.length }; }
+        for (const c of comp.cells) { c.b = LAKE; c.data[this.ns] = { вода: 'пресная', размер: comp.cells.length }; }
         lakes++;
       }
       return { озёр: lakes };
@@ -198,13 +438,12 @@ const RULES = [
     // только убирает спорный биом со своей стороны и не создаёт океан → проверки по черновику соседа достаточно
     apply(ctx) {
       let n = 0;
-      for (const c of ctx.cells) if (c.b === LAKE && DIRS.some(([a, b]) => ctx.biomeAt(c.q + a, c.r + b) === OCEAN)) { c.b = SHORE; c.data[this.id] = { было: 'озеро' }; n++; }
+      for (const c of ctx.cells) if (c.b === LAKE && DIRS.some(([a, b]) => ctx.biomeAt(c.q + a, c.r + b) === OCEAN)) { c.b = SHORE; c.data[this.ns] = { было: 'озеро' }; n++; }
       return { клеток: n };
     } },
 ];
-RULES.forEach(r => { r.enabled = true; r.h = strHash(r.id); r.values = Object.fromEntries(r.params.map(p => [p.key, p.value])); });
+RULES.forEach(r => { r.enabled = true; r.ns = r.ns || r.id; r.h = strHash(r.id); r.values = Object.fromEntries(r.params.map(p => [p.key, p.value])); });
 
-// связные области (nbFn(c) → соседи, undefined = за пределами набора → область «касается края»)
 function waterComponents(cells, nbFn, isWater) {
   const seen = new Set(), comps = [];
   for (const c of cells) {
@@ -215,8 +454,6 @@ function waterComponents(cells, nbFn, isWater) {
   }
   return comps;
 }
-
-// запуск этапа: правила по порядку; каждому — свой контекст с параметрами и своей случайностью
 function runStage(stage, base) {
   const stats = {};
   for (const r of RULES) {
@@ -242,12 +479,12 @@ function generateTop() {
   topStats = runStage('top', { lvl: TOP, cells: topCells, byKey: topByKey, nb: c => DIRS.map(([a, b]) => topByKey.get(K(c.q + a, c.r + b))) });
 }
 const cache = new Map();
-function getBiome(L, q, r) {
-  if (L === TOP) { const c = topByKey.get(K(q, r)); return c ? c.b : OCEAN; }
+function getCell(L, q, r) {
+  if (L === TOP) return topByKey.get(K(q, r)) || null;
   const [Q, R] = parentOf(q, r);
-  return getBatch(L + 1, Q, R).byKey.get(K(q, r)).b;
+  return getBatch(L + 1, Q, R).byKey.get(K(q, r));
 }
-// ЭТАП «черновик»: 100 детей гекса (L,Q,R), зависит только от итога уровня выше
+const getBiome = (L, q, r) => { const c = getCell(L, q, r); return c ? c.b : OCEAN; };
 function getDraft(L, Q, R) {
   const key = 'd' + L + ':' + Q + ':' + R; if (cache.has(key)) return cache.get(key);
   const dom = getBiome(L, Q, R), [px, py] = toPx(Q, R, 10);
@@ -257,11 +494,10 @@ function getDraft(L, Q, R) {
     return { q, r, idx, x, y, f: Math.max(0, 1 - hexNorm(x - px, y - py, 10)), b: -1, data: {} };
   });
   const byKey = new Map(cells.map(c => [K(c.q, c.r), c]));
-  const stats = runStage('draft', { lvl: L - 1, L, Q, R, dom, parents, cells, byKey });
-  cells.forEach(deepFreeze); // черновик неизменяем: правила итога могут его только читать
+  const stats = runStage('draft', { lvl: L - 1, L, Q, R, dom, parents, cells, byKey, cellAbove: (q, r) => getCell(L, q, r) });
+  cells.forEach(deepFreeze);
   const draft = { cells, byKey, dom, stats }; cache.set(key, draft); return draft;
 }
-// ЭТАП «итог»: черновик + правила, видящие черновики соседей
 function getBatch(L, Q, R) {
   const key = L + ':' + Q + ':' + R; if (cache.has(key)) return cache.get(key);
   const draft = getDraft(L, Q, R);
@@ -275,34 +511,45 @@ function getBatch(L, Q, R) {
   cache.set(key, batch); return batch;
 }
 
-// ================= проверка стыков (общая для всех правил) =================
+// ================= проверки (общие для всех правил) =================
 const forbiddenPairs = () => RULES.filter(r => r.enabled && r.forbids).flatMap(r => r.forbids);
-function countViolations(batches) {
-  const pairs = forbiddenPairs(); if (!pairs.length) return { total: 0, border: 0 };
-  const bad = (a, b) => pairs.some(([x, y]) => (a === x && b === y) || (a === y && b === x));
-  const all = new Map(); batches.forEach((b, i) => b.cells.forEach(c => all.set(K(c.q, c.r), [c.b, i, c])));
-  let total = 0, border = 0;
-  for (const [, [b, i, c]] of all) for (const [a, bb] of DIRS.slice(0, 3)) { // каждую пару считаем один раз
-    const n = all.get(K(c.q + a, c.r + bb)); if (n && bad(b, n[0])) { total++; if (n[1] !== i) border++; } }
-  return { total, border };
+// клетка уровня lvl лежит за краем карты верхнего уровня (туда реки просто вытекают)
+function offMap(lvl, q, r) { for (let l = lvl; l < TOP; l++) [q, r] = parentOf(q, r); return !topByKey.has(K(q, r)); }
+function countViolations(batches, lvl) {
+  const pairs = forbiddenPairs(), bad = (a, b) => pairs.some(([x, y]) => (a === x && b === y) || (a === y && b === x));
+  const all = new Map(); batches.forEach((b, i) => b.cells.forEach(c => all.set(K(c.q, c.r), [i, c])));
+  let total = 0, border = 0, breaks = 0;
+  for (const [, [i, c]] of all) {
+    for (const [a, bb] of DIRS.slice(0, 3)) { const n = all.get(K(c.q + a, c.r + bb)); if (n && bad(c.b, n[1].b)) { total++; if (n[0] !== i) border++; } }
+    // реки и дороги: у соседа по каждой точке стыковки должна быть ответная (или полоса того же типа)
+    for (const ns of ['rivers', 'roads']) {
+      const nd = c.data[ns]; if (!nd || !nd.ports) continue;
+      for (const p of nd.ports) {
+        const o = all.get(K(c.q + DIRS[p.e][0], c.r + DIRS[p.e][1])); if (!o) continue; const on = o[1].data[ns];
+        if (!(on && (on.band || (on.ports && on.ports.some(x => x.e === (p.e + 3) % 6 && x.s === p.s)))) && !offMap(lvl, o[1].q, o[1].r)) breaks++;
+      }
+    }
+  }
+  return { total, border, breaks };
 }
 function runSeamCheck() {
-  const saved = SEED; let views = 0, total = 0, border = 0, orderOk = true;
+  const saved = SEED; let views = 0, total = 0, border = 0, breaks = 0, orderOk = true;
   const view = (L, q, r) => [[q, r], ...DIRS.map(([a, b]) => [q + a, r + b])].map(([a, b]) => getBatch(L, a, b));
   for (let sd = 1; sd <= 10; sd++) {
     SEED = sd; cache.clear(); generateTop();
     for (const t of topCells) {
-      const v1 = view(TOP, t.q, t.r), c = v1[0].cells.find(c => c.b === LAKE) || v1[0].cells[50], v2 = view(TOP - 1, c.q, c.r);
-      for (const v of [countViolations(v1), countViolations(v2)]) { views++; total += v.total; border += v.border; }
+      const v1 = view(TOP, t.q, t.r);
+      const c = v1[0].cells.find(c => c.data.rivers && c.data.rivers.ports) || v1[0].cells.find(c => c.data.roads && c.data.roads.ports) || v1[0].cells[50];
+      const v2 = view(TOP - 1, c.q, c.r);
+      for (const v of [countViolations(v1, TOP - 1), countViolations(v2, TOP - 2)]) { views++; total += v.total; border += v.border; breaks += v.breaks; }
     }
-    // порядок открытия не должен влиять на итог
-    const t = topCells[(sd * 37) % topCells.length], A = JSON.stringify(getBatch(TOP, t.q, t.r).cells.map(c => c.b));
+    const t = topCells[(sd * 37) % topCells.length], A = JSON.stringify(getBatch(TOP, t.q, t.r).cells.map(c => [c.b, c.data.rivers, c.data.roads]));
     cache.clear(); DIRS.forEach(([a, b]) => getBatch(TOP, t.q + a, t.r + b));
-    if (A !== JSON.stringify(getBatch(TOP, t.q, t.r).cells.map(c => c.b))) orderOk = false;
+    if (A !== JSON.stringify(getBatch(TOP, t.q, t.r).cells.map(c => [c.b, c.data.rivers, c.data.roads]))) orderOk = false;
   }
   SEED = saved; cache.clear(); generateTop();
   const pairs = forbiddenPairs().map(([a, b]) => BIOMES[a][0] + '–' + BIOMES[b][0]).join(', ') || 'нет';
-  document.getElementById('check').textContent = `Проверка: ${views} видов. Запрещённые соседства: ${pairs}. Нарушений: ${total} (на стыках: ${border}). Порядок открытия ${orderOk ? 'не влияет ✔' : 'ВЛИЯЕТ ✘'}`;
+  document.getElementById('check').textContent = `Проверка: ${views} видов. Запрещённые соседства (${pairs}): ${total} (на стыках: ${border}). Разрывов рек/дорог: ${breaks}. Порядок открытия ${orderOk ? 'не влияет ✔' : 'ВЛИЯЕТ ✘'}`;
   render();
 }
 
@@ -311,13 +558,28 @@ const svg = document.getElementById('svg'), status = document.getElementById('st
 const hexPts = (cx, cy, size) => Array.from({ length: 6 }, (_, k) => { const a = Math.PI / 3 * k; return `${(cx + size * Math.cos(a)).toFixed(3)},${(cy + size * Math.sin(a)).toFixed(3)}`; }).join(' ');
 const ruleName = id => (RULES.find(r => r.id === id) || { name: id }).name;
 const statsHtml = st => Object.entries(st).filter(([, v]) => Object.keys(v).length).map(([id, v]) => `<div class="meta">${ruleName(id)}: ${Object.entries(v).map(([k, x]) => k + ' ' + x).join(', ')}</div>`).join('');
-const cellText = (lvl, c, extra) => `Ур. ${lvl} (${SIZE[lvl]}) · ${extra} · ${BIOMES[c.b][0]}\ndata: ${JSON.stringify(c.data)}`;
+const short = data => JSON.stringify(data, (k, v) => k === 'pts' ? `[${v.length} точек]` : v);
+const cellText = (lvl, c, extra) => `Ур. ${lvl} (${SIZE[lvl]}) · ${extra} · ${BIOMES[c.b][0]}\ndata: ${short(c.data)}`;
+function linearSvg(cells, ox, oy, lvl) {
+  let h = '';
+  for (const ns of ['rivers', 'roads']) for (const c of cells) {
+    const nd = c.data[ns]; if (!nd || !nd.ports) continue;
+    const [cx, cy] = toPx(c.q, c.r);
+    for (const p of nd.ports) {
+      const [x, y] = portXY(c.q, c.r, p.e, p.s, 1), w = Math.min(0.7, Math.max(ns === 'rivers' ? 0.1 : 0.08, 2 * p.size / Math.pow(10, lvl)));
+      h += `<line x1="${(x - ox).toFixed(3)}" y1="${(y - oy).toFixed(3)}" x2="${(cx - ox).toFixed(3)}" y2="${(cy - oy).toFixed(3)}" stroke="${ns === 'rivers' ? '#1f6fd1' : '#6b3d1f'}" stroke-width="${w.toFixed(3)}" stroke-linecap="round" pointer-events="none"/>`;
+    }
+    if (nd.town) h += `<circle cx="${(cx - ox).toFixed(3)}" cy="${(cy - oy).toFixed(3)}" r="0.35" fill="#c0392b" stroke="#fff" stroke-width="0.08" pointer-events="none"/>`;
+    if (nd.spring) h += `<circle cx="${(cx - ox).toFixed(3)}" cy="${(cy - oy).toFixed(3)}" r="0.22" fill="#fff" stroke="#1f6fd1" stroke-width="0.08" pointer-events="none"/>`;
+  }
+  return h;
+}
 let stack = [];
 function render() { renderCrumbs(); if (!stack.length) renderTop(); else renderChildren(stack[stack.length - 1]); }
 function renderTop() {
   const maxX = 1.5 * (COLS - 1) + 1, maxY = SQ3 * (ROWS - 0.5) + SQ3 / 2;
   svg.setAttribute('viewBox', `-1.2 ${-SQ3 / 2 - 0.2} ${maxX + 2.4} ${maxY + SQ3 / 2 + 0.4}`);
-  svg.innerHTML = topCells.map((c, i) => { const [x, y] = toPx(c.q, c.r); return `<polygon points="${hexPts(x, y, 1)}" fill="${BIOMES[c.b][1]}" stroke="#0003" stroke-width="0.05" data-i="${i}"/>`; }).join('');
+  svg.innerHTML = topCells.map((c, i) => { const [x, y] = toPx(c.q, c.r); return `<polygon points="${hexPts(x, y, 1)}" fill="${BIOMES[c.b][1]}" stroke="#0003" stroke-width="0.05" data-i="${i}"/>`; }).join('') + linearSvg(topCells, 0, 0, TOP);
   info.innerHTML = `Верхний уровень: ${COLS}×${ROWS}, гекс = ${SIZE[TOP]}.<br>Клик по гексу — провалиться внутрь.${statsHtml(topStats)}`;
   svg.onclick = e => { const i = e.target.dataset.i; if (i == null) return; const c = topCells[+i]; stack.push({ L: TOP, Q: c.q, R: c.r, label: c.col + ',' + c.row }); render(); };
   svg.onmousemove = e => { const i = e.target.dataset.i; if (i == null) return; const c = topCells[+i]; status.textContent = cellText(TOP, c, `столбец ${c.col}, строка ${c.row}`); };
@@ -328,12 +590,13 @@ function renderChildren({ L, Q, R }) {
   const parents = [[Q, R], ...DIRS.map(([a, b]) => [Q + a, R + b])], batches = parents.map(([a, b]) => getBatch(L, a, b));
   let h = '';
   batches.forEach((batch, i) => { for (const c of batch.cells) h += `<polygon points="${hexPts(c.x - px, c.y - py, 1)}" fill="${BIOMES[c.b][1]}" stroke="#0002" stroke-width="0.05" opacity="${i ? 0.45 : 1}" data-p="${i}" data-k="${c.idx}"/>`; });
+  h += linearSvg(batches.flatMap(b => b.cells), px, py, L - 1);
   parents.forEach(([pq, pr], i) => { const [x, y] = toPx(pq, pr, 10); h += `<polygon points="${hexPts(x - px, y - py, 10)}" fill="none" stroke="#222" stroke-width="${i ? 0.08 : 0.2}" stroke-dasharray="0.6 0.4" pointer-events="none"/>`; });
   svg.innerHTML = h;
-  const b = batches[0], v = countViolations(batches);
+  const b = batches[0], v = countViolations(batches, L - 1);
   const rows = [...b.shares].sort((a, c) => c[1] - a[1]).map(([bb, n]) => `<div><span class="sw" style="background:${BIOMES[bb][1]}"></span>${BIOMES[bb][0]} — ${n}%</div>`).join('');
   info.innerHTML = `Гекс уровня ${L} (${SIZE[L]}): <b>${BIOMES[b.dom][0]}</b><br>Внутри — уровень ${L - 1} (${SIZE[L - 1]}):${rows}${statsHtml(b.stats)}` +
-    `<div>Нарушений соседства на экране: <b>${v.total}</b> (на стыках: ${v.border})</div><div class="meta">Клик по яркой клетке — глубже, по бледной — в соседний гекс.</div>`;
+    `<div>Нарушений соседства на экране: <b>${v.total}</b> (на стыках: ${v.border}), разрывов рек/дорог: <b>${v.breaks}</b></div><div class="meta">Клик по яркой клетке — глубже, по бледной — в соседний гекс.</div>`;
   svg.onclick = e => {
     const d = e.target.dataset; if (d.p == null) return; const c = batches[+d.p].cells[+d.k];
     if (+d.p === 0) { if (L - 1 >= 1) { stack.push({ L: L - 1, Q: c.q, R: c.r, label: '#' + c.idx }); render(); } }
@@ -354,7 +617,7 @@ function renderRules() {
       <input type="checkbox" data-en="${i}" ${r.enabled || r.locked ? 'checked' : ''} ${r.locked ? 'disabled' : ''}>
       <span>${r.name}${r.locked ? ' <span class="meta">(базовое)</span>' : ''}</span>
       ${r.locked ? '' : `<button data-up="${i}">↑</button><button data-down="${i}">↓</button>`}</div>
-      <div class="meta">${r.id}${r.forbids ? ' · запрещает: ' + r.forbids.map(([a, b]) => BIOMES[a][0] + '–' + BIOMES[b][0]).join(', ') : ''}</div>
+      <div class="meta">${r.id}${r.ns !== r.id ? ' · data.' + r.ns : ''}${r.forbids ? ' · запрещает: ' + r.forbids.map(([a, b]) => BIOMES[a][0] + '–' + BIOMES[b][0]).join(', ') : ''}</div>
       ${r.params.map(p => `<label>${p.label} <input type="range" min="${p.min}" max="${p.max}" step="${p.step}" value="${r.values[p.key]}" data-r="${i}" data-k="${p.key}"><b>${r.values[p.key]}</b></label>`).join('')}
     </div>`).join('')).join('');
 }
@@ -368,11 +631,12 @@ rulesEl.addEventListener('input', e => {
 rulesEl.addEventListener('click', e => {
   const d = e.target.dataset, i = d.up != null ? +d.up : d.down != null ? +d.down : null; if (i == null) return;
   const dir = d.up != null ? -1 : 1; let j = i + dir;
-  while (j >= 0 && j < RULES.length && RULES[j].stage !== RULES[i].stage) j += dir; // двигаем только внутри своего этапа
+  while (j >= 0 && j < RULES.length && RULES[j].stage !== RULES[i].stage) j += dir;
   if (j < 0 || j >= RULES.length || RULES[j].locked) return; // базовое правило всегда первое в своём этапе
   [RULES[i], RULES[j]] = [RULES[j], RULES[i]]; regen(true);
 });
-document.getElementById('legend').innerHTML = BIOMES.map(([n, c]) => `<div><span style="background:${c}"></span>${n}</div>`).join('');
+document.getElementById('legend').innerHTML = BIOMES.map(([n, c]) => `<div><span style="background:${c}"></span>${n}</div>`).join('') +
+  '<div class="meta">Линии: синие — реки и ручьи (○ — родник), коричневые — дороги (● — город)</div>';
 function regen(redrawRules = true) {
   SEED = +document.getElementById('seed').value | 0;
   cache.clear(); generateTop(); if (redrawRules) renderRules(); render();
