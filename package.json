@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "sandbox": "node sandbox/serve.mjs",
+    "sandbox:test": "node sandbox/tests/run.mjs --seams",
     "build": "run-p type-check \"build-only {@}\" --",
     "preview": "vite preview",
     "build-only": "vite build",
