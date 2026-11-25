@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><title>Biome sandbox</title>
+<style>
+body{font-family:sans-serif;background:#fff;color:#222;margin:12px}
+.controls{display:flex;flex-wrap:wrap;gap:14px;align-items:center;font-size:14px;margin-bottom:8px}
+.crumbs button{margin-right:4px}
+.wrap{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start}
+svg{border:1px solid #ccc;width:min(720px,100%);height:auto;background:#f6f6f6}
+#svg polygon:hover{stroke:#000;stroke-width:.15}
+.side{font-size:13px;width:340px;max-width:100%}
+.legend span,.sw{display:inline-block;width:11px;height:11px;margin-right:6px;vertical-align:middle;border:1px solid #0003}
+#status{min-height:36px;font-size:13px;margin:6px 0;font-family:monospace;white-space:pre-wrap}
+.stage{margin:8px 0 2px;font-weight:bold}
+.rule{border:1px solid #ddd;border-radius:4px;padding:4px 6px;margin:3px 0}
+.rule .head{display:flex;align-items:center;gap:6px}
+.rule .head span{flex:1}
+.rule .head button{padding:0 5px}
+.rule .meta{color:#888;font-size:11px}
+.rule label{display:flex;gap:6px;align-items:center;font-size:12px;margin-top:2px}
+.rule input[type=range]{flex:1}
+#check{font-size:13px;white-space:pre-wrap}
+</style></head><body>
+<h3>Песочница биомов — конвейер правил</h3>
+<div class="controls">
+  <label>Сид <input id="seed" type="number" value="1" style="width:90px"></label>
+  <button id="rnd">Другой сид</button>
+  <button id="checkBtn">Проверить стыки (10 сидов)</button>
+</div>
+<div id="check"></div>
+<div class="crumbs" id="crumbs"></div>
+<div id="status"></div>
+<div class="wrap">
+  <svg id="svg"></svg>
+  <div class="side"><div id="info"></div><h4>Правила</h4><div id="rules"></div><h4>Биомы</h4><div class="legend" id="legend"></div></div>
+</div>
+<script>
+'use strict';
+// ================= геометрия (flat-top, масштаб 10, 100 детей) =================
+const SQ3 = Math.sqrt(3);
+const DIRS = [[1,0],[1,-1],[0,-1],[-1,0],[-1,1],[0,1]];
+const DIRS_RU = ['ЮВ', 'СВ', 'С', 'СЗ', 'ЮЗ', 'Ю'];
+const OWNED = new Set([0,2,4]);
+const toPx = (q, r, size = 1) => [size * 1.5 * q, size * SQ3 * (r + q / 2)];
+const hexNorm = (x, y, size) => Math.max(Math.abs(y) / (size * SQ3 / 2), (SQ3 * Math.abs(x) + Math.abs(y)) / (size * SQ3));
+function cubeRound(fq, fr) {
+  const fs = -fq - fr; let q = Math.round(fq), r = Math.round(fr), s = Math.round(fs);
+  const dq = Math.abs(q - fq), dr = Math.abs(r - fr), ds = Math.abs(s - fs);
+  if (dq > dr && dq > ds) q = -r - s; else if (dr > ds) r = -q - s; return [q, r];
+}
+function parentOf(q, r) {
+  const [x, y] = toPx(q, r), S = 10;
+  const [Q0, R0] = cubeRound((2 / 3 * x) / S, (-x / 3 + SQ3 / 3 * y) / S);
+  const hits = [[Q0, R0], ...DIRS.map(([a, b]) => [Q0 + a, R0 + b])]
+    .filter(([Q, R]) => { const [cx, cy] = toPx(Q, R, S); return hexNorm(x - cx, y - cy, S) <= 1 + 1e-9; });
+  if (hits.length === 1) return hits[0];
+  const [A, B] = hits; const i = DIRS.findIndex(([a, b]) => A[0] + a === B[0] && A[1] + b === B[1]);
+  return OWNED.has(i) ? A : B;
+}
+const CHILD_OFFSETS = [];
+for (let q = -10; q <= 10; q++) for (let r = -10; r <= 10; r++) { const [Q, R] = parentOf(q, r); if (Q === 0 && R === 0) CHILD_OFFSETS.push([q, r]); }
+CHILD_OFFSETS.sort((a, b) => (2 * a[1] + a[0]) - (2 * b[1] + b[0]) || a[0] - b[0]); // построчно
+const RING2 = []; for (let a = -2; a <= 2; a++) for (let b = Math.max(-2, -a - 2); b <= Math.min(2, -a + 2); b++) RING2.push([a, b]);
+const K = (q, r) => q + ',' + r;
+
+// ================= случайность (детерминирована от сида) =================
+let SEED = 1;
+function hash(...ns) {
+  let h = (0x9e3779b9 ^ SEED) | 0;
+  for (const n of ns) { h = Math.imul(h ^ (n | 0), 0x85ebca6b); h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35); h ^= h >>> 16; }
+  return (h >>> 0) / 4294967296;
+}
+function rngFrom(...ns) { let a = Math.floor(hash(...ns) * 4294967296); return () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+const strHash = s => { let h = 2166136261; for (const ch of s) h = Math.imul(h ^ ch.charCodeAt(0), 16777619); return h | 0; };
+function vnoise(x, y, a, b, c) {
+  const ix = Math.floor(x), iy = Math.floor(y), fx = x - ix, fy = y - iy;
+  const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+  const p = hash(a, b, c, ix, iy), q = hash(a, b, c, ix + 1, iy), r = hash(a, b, c, ix, iy + 1), s = hash(a, b, c, ix + 1, iy + 1);
+  return p + (q - p) * sx + (r - p) * sy + (p - q - r + s) * sx * sy;
+}
+const fbm = (x, y, a, b, c) => 0.65 * vnoise(x, y, a, b, c * 2) + 0.35 * vnoise(x * 2 + 17.3, y * 2 - 9.1, a, b, c * 2 + 1);
+
+// ================= биомы =================
+const BIOMES = [
+  ['Океан', '#2f5f98'], ['Озеро', '#5b9bd5'], ['Луга', '#b9d77a'], ['Лес', '#4f8a3c'],
+  ['Болото', '#6f7f52'], ['Холмы', '#b49a64'], ['Горы', '#8a8580'], ['Пустыня', '#e6d08a'], ['Берег', '#f3ead0'],
+];
+const OCEAN = 0, LAKE = 1, SHORE = 8;
+const INCL = { 0: [2], 1: [2], 2: [3, 1, 5, 4], 3: [1, 2, 4, 5], 4: [1, 3], 5: [3, 2, 6, 1], 6: [5, 1], 7: [5, 2, 1], 8: [2] };
+const SIZE = ['1 м', '10 м', '100 м', '1 км', '10 км'];
+const TOP = 4, COLS = 16, ROWS = 10;
+const topAxial = (col, row) => [col, row - ((col - (col & 1)) / 2)];
+
+// ================= ПРАВИЛА =================
+// stage: top — вся карта верхнего уровня; draft — своя пачка + уровень выше; final — своя пачка + ЧЕРНОВИКИ 6 соседей (только чтение).
+// Каждое правило пишет доп. данные только в c.data[rule.id]. Случайность у каждого правила своя (rand/rng/noise).
+// forbids — пары биомов, которые не должны соседствовать; их проверяет общая проверка стыков.
+const RULES = [
+  { id: 'top.base', stage: 'top', locked: true, name: 'Высота и влажность → биом', params: [],
+    apply(ctx) {
+      for (const c of ctx.cells) {
+        const [x, y] = toPx(c.q, c.r);
+        let e = (ctx.noise(x / 4, y / 4, 1) - 0.5) * 1.8 + 0.5;
+        const fall = Math.min(1, Math.min(c.col, COLS - 1 - c.col) / 2.5, Math.min(c.row, ROWS - 1 - c.row) / 2);
+        e *= 0.5 + 0.5 * fall;
+        const m = (ctx.noise(x / 5, y / 5, 2) - 0.5) * 1.8 + 0.5;
+        c.b = e < 0.33 ? OCEAN : e > 0.72 ? 6 : e > 0.62 ? 5 : m < 0.3 ? 7 : m < 0.5 ? 2 : (m > 0.75 && e < 0.45) ? 4 : 3;
+        c.data[this.id] = { высота: +e.toFixed(2), влажность: +m.toFixed(2) };
+      }
+    } },
+  { id: 'top.neighbors', stage: 'top', name: 'Соседи повышают шанс своего биома', params: [{ key: 'chance', label: 'Сила', min: 0, max: 0.5, step: 0.05, value: 0.25 }],
+    apply(ctx) {
+      const prev = new Map(ctx.cells.map(c => [c, c.b])); let n = 0;
+      for (const c of ctx.cells) {
+        const own = prev.get(c), cnt = new Map();
+        for (const nb of ctx.nb(c)) if (nb) cnt.set(prev.get(nb), (cnt.get(prev.get(nb)) || 0) + 1);
+        let best = own, bc = 0; for (const [b, k] of cnt) if (b !== own && k > bc) { best = b; bc = k; }
+        if (bc >= (own === OCEAN ? 5 : 3) && ctx.rand(c.q, c.r) < (bc - 2) * ctx.p.chance) { c.b = best; n++; }
+      }
+      return { изменено: n };
+    } },
+  { id: 'top.detachedWater', stage: 'top', name: 'Вода без связи с главным океаном → озеро', params: [{ key: 'maxSize', label: 'Макс. размер', min: 1, max: 30, step: 1, value: 8 }],
+    apply(ctx) {
+      const comps = waterComponents(ctx.cells, c => ctx.nb(c), c => c.b === OCEAN);
+      const main = comps.reduce((a, b) => (!a || b.cells.length > a.cells.length) ? b : a, null);
+      let lakes = 0;
+      for (const comp of comps) {
+        if (comp === main || comp.edge || comp.cells.length > ctx.p.maxSize) continue;
+        for (const c of comp.cells) { c.b = LAKE; c.data[this.id] = { вода: 'пресная', размер: comp.cells.length }; }
+        lakes++;
+      }
+      return { озёр: lakes };
+    } },
+  { id: 'draft.blend', stage: 'draft', locked: true, name: 'Смешивание родителей + изгиб + шум', params: [
+      { key: 'amp', label: 'Шум', min: 0, max: 1.5, step: 0.05, value: 0.4 }, { key: 'warp', label: 'Изгиб границ', min: 0, max: 16, step: 1, value: 8 }],
+    apply(ctx) {
+      const D = SQ3 * 10;
+      for (const c of ctx.cells) {
+        const wx = c.x + (ctx.noise(c.x / 10, c.y / 10, 901) - 0.5) * 2 * ctx.p.warp, wy = c.y + (ctx.noise(c.x / 10, c.y / 10, 902) - 0.5) * 2 * ctx.p.warp;
+        const w = new Map(); let ws = 0;
+        for (const P of ctx.parents) { const wi = Math.max(0, 1 - Math.hypot(wx - P.x, wy - P.y) / D); if (wi > 0) { w.set(P.b, (w.get(P.b) || 0) + wi); ws += wi; } }
+        c.base = [...w].map(([b, wi]) => [b, wi / ws + ctx.p.amp * (ctx.noise(c.x / 4, c.y / 4, b + 10) - 0.5) * 2]);
+        c.b = c.base.reduce((a, b) => b[1] > a[1] ? b : a)[0];
+      }
+    } },
+  { id: 'draft.inclusions', stage: 'draft', name: 'Вкрапления', params: [{ key: 'max', label: 'Макс. пятен', min: 0, max: 4, step: 1, value: 2 }],
+    apply(ctx) {
+      const rng = ctx.rng(ctx.Q, ctx.R), n = Math.floor(rng() * (ctx.p.max + 1)), opts = INCL[ctx.dom]; let total = 0;
+      for (let k = 0; k < n; k++) {
+        const free = ctx.cells.filter(c => !c.data[this.id]); if (!free.length) break;
+        const t = opts[Math.floor(rng() * opts.length)], size = 3 + Math.floor(rng() * 13);
+        const mark = c => { c.b = t; c.data[this.id] = { t, тип: BIOMES[t][0], пятно: k }; total++; };
+        const start = free[Math.floor(rng() * free.length)]; mark(start); const grown = [start];
+        while (grown.length < size) {
+          const front = [];
+          for (const g of grown) for (const [a, b] of DIRS) { const c = ctx.byKey.get(K(g.q + a, g.r + b)); if (c && !c.data[this.id] && !front.includes(c)) front.push(c); }
+          if (!front.length) break; const c = front[Math.floor(rng() * front.length)]; mark(c); grown.push(c);
+        }
+      }
+      return { пятен: n, клеток: total };
+    } },
+  { id: 'draft.quota', stage: 'draft', name: 'Минимальная доля биома родителя', params: [{ key: 'share', label: 'Доля, %', min: 40, max: 80, step: 1, value: 55 }],
+    apply(ctx) {
+      const dom = ctx.dom, isIncl = c => !!c.data['draft.inclusions'];
+      const assign = delta => { let cnt = 0; for (const c of ctx.cells) { if (!isIncl(c)) { let bb = c.b, bs = -Infinity; for (const [b, s] of c.base) { const v = s + (b === dom ? delta * c.f : 0); if (v > bs) { bs = v; bb = b; } } c.b = bb; } if (c.b === dom) cnt++; } return cnt; };
+      const need = Math.ceil(ctx.p.share / 100 * ctx.cells.length); let delta = 0;
+      if (assign(0) < need) { let lo = 0, hi = 4; for (let i = 0; i < 16; i++) { const mid = (lo + hi) / 2; if (assign(mid) >= need) hi = mid; else lo = mid; } delta = hi; assign(hi); }
+      return { надбавка: +delta.toFixed(3) };
+    } },
+  { id: 'final.continue', stage: 'final', name: 'Продолжение пятен соседа через границу', params: [{ key: 'strength', label: 'Сила', min: 0, max: 1.2, step: 0.05, value: 1 }],
+    apply(ctx) {
+      const inc = 'draft.inclusions', P = [0.85, 0.55, 0.3].map(v => Math.min(1, v * ctx.p.strength));
+      let front = [], n = 0;
+      for (const d of ctx.neighborDrafts) for (const c of d.cells) { const di = c.data[inc]; if (!di) continue;
+        for (const [a, b] of DIRS) { const m = ctx.byKey.get(K(c.q + a, c.r + b)); if (m && !m.data[inc]) front.push([m, di.t]); } }
+      for (let depth = 0; depth < P.length && front.length; depth++) {
+        const next = [];
+        for (const [m, t] of front) {
+          if (m.data[this.id] || m.data[inc] || ctx.rand(m.q, m.r, t, depth) >= P[depth]) continue;
+          m.b = t; m.data[this.id] = { тип: BIOMES[t][0], глубина: depth + 1 }; n++;
+          for (const [a, b] of DIRS) { const k = ctx.byKey.get(K(m.q + a, m.r + b)); if (k && !k.data[this.id] && !k.data[inc]) next.push([k, t]); }
+        }
+        front = next;
+      }
+      return { клеток: n };
+    } },
+  { id: 'final.enclosedWater', stage: 'final', name: 'Вода внутри гекса, не касающаяся края → озеро', params: [{ key: 'maxSize', label: 'Макс. размер', min: 1, max: 60, step: 1, value: 30 }],
+    apply(ctx) {
+      const comps = waterComponents(ctx.cells, c => DIRS.map(([a, b]) => ctx.byKey.get(K(c.q + a, c.r + b))), c => c.b === OCEAN);
+      let lakes = 0;
+      for (const comp of comps) {
+        if (comp.edge || comp.cells.length > ctx.p.maxSize) continue; // касается края → не знаем, куда ведёт → остаётся океаном
+        for (const c of comp.cells) { c.b = LAKE; c.data[this.id] = { вода: 'пресная', размер: comp.cells.length }; }
+        lakes++;
+      }
+      return { озёр: lakes };
+    } },
+  { id: 'final.lakeShore', stage: 'final', name: 'Озеро у океана → берег', forbids: [[LAKE, OCEAN]], params: [],
+    // только убирает спорный биом со своей стороны и не создаёт океан → проверки по черновику соседа достаточно
+    apply(ctx) {
+      let n = 0;
+      for (const c of ctx.cells) if (c.b === LAKE && DIRS.some(([a, b]) => ctx.biomeAt(c.q + a, c.r + b) === OCEAN)) { c.b = SHORE; c.data[this.id] = { было: 'озеро' }; n++; }
+      return { клеток: n };
+    } },
+];
+RULES.forEach(r => { r.enabled = true; r.h = strHash(r.id); r.values = Object.fromEntries(r.params.map(p => [p.key, p.value])); });
+
+// связные области (nbFn(c) → соседи, undefined = за пределами набора → область «касается края»)
+function waterComponents(cells, nbFn, isWater) {
+  const seen = new Set(), comps = [];
+  for (const c of cells) {
+    if (!isWater(c) || seen.has(c)) continue;
+    const comp = { cells: [], edge: false }, stack = [c]; seen.add(c);
+    while (stack.length) { const x = stack.pop(); comp.cells.push(x); for (const nb of nbFn(x)) { if (!nb) { comp.edge = true; continue; } if (isWater(nb) && !seen.has(nb)) { seen.add(nb); stack.push(nb); } } }
+    comps.push(comp);
+  }
+  return comps;
+}
+
+// запуск этапа: правила по порядку; каждому — свой контекст с параметрами и своей случайностью
+function runStage(stage, base) {
+  const stats = {};
+  for (const r of RULES) {
+    if (r.stage !== stage || !(r.enabled || r.locked)) continue;
+    const ctx = Object.assign({}, base, {
+      p: r.values,
+      rand: (...n) => hash(r.h, base.lvl, ...n),
+      rng: (...n) => rngFrom(r.h, base.lvl, ...n),
+      noise: (x, y, t) => fbm(x, y, r.h, base.lvl, t),
+    });
+    stats[r.id] = r.apply(ctx) || {};
+  }
+  return stats;
+}
+const deepFreeze = c => { for (const v of Object.values(c.data)) Object.freeze(v); Object.freeze(c.data); return Object.freeze(c); };
+
+// ================= движок генерации =================
+let topCells = [], topByKey = new Map(), topStats = {};
+function generateTop() {
+  topCells = [];
+  for (let row = 0; row < ROWS; row++) for (let col = 0; col < COLS; col++) { const [q, r] = topAxial(col, row); topCells.push({ q, r, col, row, b: OCEAN, data: {} }); }
+  topByKey = new Map(topCells.map(c => [K(c.q, c.r), c]));
+  topStats = runStage('top', { lvl: TOP, cells: topCells, byKey: topByKey, nb: c => DIRS.map(([a, b]) => topByKey.get(K(c.q + a, c.r + b))) });
+}
+const cache = new Map();
+function getBiome(L, q, r) {
+  if (L === TOP) { const c = topByKey.get(K(q, r)); return c ? c.b : OCEAN; }
+  const [Q, R] = parentOf(q, r);
+  return getBatch(L + 1, Q, R).byKey.get(K(q, r)).b;
+}
+// ЭТАП «черновик»: 100 детей гекса (L,Q,R), зависит только от итога уровня выше
+function getDraft(L, Q, R) {
+  const key = 'd' + L + ':' + Q + ':' + R; if (cache.has(key)) return cache.get(key);
+  const dom = getBiome(L, Q, R), [px, py] = toPx(Q, R, 10);
+  const parents = RING2.map(([a, b]) => { const [x, y] = toPx(Q + a, R + b, 10); return { b: getBiome(L, Q + a, R + b), x, y }; });
+  const cells = CHILD_OFFSETS.map(([dq, dr], idx) => {
+    const q = 10 * Q + dq, r = 10 * R + dr, [x, y] = toPx(q, r);
+    return { q, r, idx, x, y, f: Math.max(0, 1 - hexNorm(x - px, y - py, 10)), b: -1, data: {} };
+  });
+  const byKey = new Map(cells.map(c => [K(c.q, c.r), c]));
+  const stats = runStage('draft', { lvl: L - 1, L, Q, R, dom, parents, cells, byKey });
+  cells.forEach(deepFreeze); // черновик неизменяем: правила итога могут его только читать
+  const draft = { cells, byKey, dom, stats }; cache.set(key, draft); return draft;
+}
+// ЭТАП «итог»: черновик + правила, видящие черновики соседей
+function getBatch(L, Q, R) {
+  const key = L + ':' + Q + ':' + R; if (cache.has(key)) return cache.get(key);
+  const draft = getDraft(L, Q, R);
+  const cells = draft.cells.map(c => ({ ...c, data: { ...c.data } }));
+  const byKey = new Map(cells.map(c => [K(c.q, c.r), c]));
+  const neighborDrafts = DIRS.map(([a, b]) => getDraft(L, Q + a, R + b));
+  const biomeAt = (q, r) => { const m = byKey.get(K(q, r)); if (m) return m.b; for (const d of neighborDrafts) { const o = d.byKey.get(K(q, r)); if (o) return o.b; } return null; };
+  const stats = runStage('final', { lvl: L - 1, L, Q, R, dom: draft.dom, cells, byKey, neighborDrafts, biomeAt });
+  const shares = new Map(); for (const c of cells) shares.set(c.b, (shares.get(c.b) || 0) + 1);
+  const batch = { cells, byKey, dom: draft.dom, shares, stats: { ...draft.stats, ...stats } };
+  cache.set(key, batch); return batch;
+}
+
+// ================= проверка стыков (общая для всех правил) =================
+const forbiddenPairs = () => RULES.filter(r => r.enabled && r.forbids).flatMap(r => r.forbids);
+function countViolations(batches) {
+  const pairs = forbiddenPairs(); if (!pairs.length) return { total: 0, border: 0 };
+  const bad = (a, b) => pairs.some(([x, y]) => (a === x && b === y) || (a === y && b === x));
+  const all = new Map(); batches.forEach((b, i) => b.cells.forEach(c => all.set(K(c.q, c.r), [c.b, i, c])));
+  let total = 0, border = 0;
+  for (const [, [b, i, c]] of all) for (const [a, bb] of DIRS.slice(0, 3)) { // каждую пару считаем один раз
+    const n = all.get(K(c.q + a, c.r + bb)); if (n && bad(b, n[0])) { total++; if (n[1] !== i) border++; } }
+  return { total, border };
+}
+function runSeamCheck() {
+  const saved = SEED; let views = 0, total = 0, border = 0, orderOk = true;
+  const view = (L, q, r) => [[q, r], ...DIRS.map(([a, b]) => [q + a, r + b])].map(([a, b]) => getBatch(L, a, b));
+  for (let sd = 1; sd <= 10; sd++) {
+    SEED = sd; cache.clear(); generateTop();
+    for (const t of topCells) {
+      const v1 = view(TOP, t.q, t.r), c = v1[0].cells.find(c => c.b === LAKE) || v1[0].cells[50], v2 = view(TOP - 1, c.q, c.r);
+      for (const v of [countViolations(v1), countViolations(v2)]) { views++; total += v.total; border += v.border; }
+    }
+    // порядок открытия не должен влиять на итог
+    const t = topCells[(sd * 37) % topCells.length], A = JSON.stringify(getBatch(TOP, t.q, t.r).cells.map(c => c.b));
+    cache.clear(); DIRS.forEach(([a, b]) => getBatch(TOP, t.q + a, t.r + b));
+    if (A !== JSON.stringify(getBatch(TOP, t.q, t.r).cells.map(c => c.b))) orderOk = false;
+  }
+  SEED = saved; cache.clear(); generateTop();
+  const pairs = forbiddenPairs().map(([a, b]) => BIOMES[a][0] + '–' + BIOMES[b][0]).join(', ') || 'нет';
+  document.getElementById('check').textContent = `Проверка: ${views} видов. Запрещённые соседства: ${pairs}. Нарушений: ${total} (на стыках: ${border}). Порядок открытия ${orderOk ? 'не влияет ✔' : 'ВЛИЯЕТ ✘'}`;
+  render();
+}
+
+// ================= отрисовка =================
+const svg = document.getElementById('svg'), status = document.getElementById('status'), info = document.getElementById('info');
+const hexPts = (cx, cy, size) => Array.from({ length: 6 }, (_, k) => { const a = Math.PI / 3 * k; return `${(cx + size * Math.cos(a)).toFixed(3)},${(cy + size * Math.sin(a)).toFixed(3)}`; }).join(' ');
+const ruleName = id => (RULES.find(r => r.id === id) || { name: id }).name;
+const statsHtml = st => Object.entries(st).filter(([, v]) => Object.keys(v).length).map(([id, v]) => `<div class="meta">${ruleName(id)}: ${Object.entries(v).map(([k, x]) => k + ' ' + x).join(', ')}</div>`).join('');
+const cellText = (lvl, c, extra) => `Ур. ${lvl} (${SIZE[lvl]}) · ${extra} · ${BIOMES[c.b][0]}\ndata: ${JSON.stringify(c.data)}`;
+let stack = [];
+function render() { renderCrumbs(); if (!stack.length) renderTop(); else renderChildren(stack[stack.length - 1]); }
+function renderTop() {
+  const maxX = 1.5 * (COLS - 1) + 1, maxY = SQ3 * (ROWS - 0.5) + SQ3 / 2;
+  svg.setAttribute('viewBox', `-1.2 ${-SQ3 / 2 - 0.2} ${maxX + 2.4} ${maxY + SQ3 / 2 + 0.4}`);
+  svg.innerHTML = topCells.map((c, i) => { const [x, y] = toPx(c.q, c.r); return `<polygon points="${hexPts(x, y, 1)}" fill="${BIOMES[c.b][1]}" stroke="#0003" stroke-width="0.05" data-i="${i}"/>`; }).join('');
+  info.innerHTML = `Верхний уровень: ${COLS}×${ROWS}, гекс = ${SIZE[TOP]}.<br>Клик по гексу — провалиться внутрь.${statsHtml(topStats)}`;
+  svg.onclick = e => { const i = e.target.dataset.i; if (i == null) return; const c = topCells[+i]; stack.push({ L: TOP, Q: c.q, R: c.r, label: c.col + ',' + c.row }); render(); };
+  svg.onmousemove = e => { const i = e.target.dataset.i; if (i == null) return; const c = topCells[+i]; status.textContent = cellText(TOP, c, `столбец ${c.col}, строка ${c.row}`); };
+}
+function renderChildren({ L, Q, R }) {
+  const [px, py] = toPx(Q, R, 10);
+  svg.setAttribute('viewBox', '-28 -27 56 54');
+  const parents = [[Q, R], ...DIRS.map(([a, b]) => [Q + a, R + b])], batches = parents.map(([a, b]) => getBatch(L, a, b));
+  let h = '';
+  batches.forEach((batch, i) => { for (const c of batch.cells) h += `<polygon points="${hexPts(c.x - px, c.y - py, 1)}" fill="${BIOMES[c.b][1]}" stroke="#0002" stroke-width="0.05" opacity="${i ? 0.45 : 1}" data-p="${i}" data-k="${c.idx}"/>`; });
+  parents.forEach(([pq, pr], i) => { const [x, y] = toPx(pq, pr, 10); h += `<polygon points="${hexPts(x - px, y - py, 10)}" fill="none" stroke="#222" stroke-width="${i ? 0.08 : 0.2}" stroke-dasharray="0.6 0.4" pointer-events="none"/>`; });
+  svg.innerHTML = h;
+  const b = batches[0], v = countViolations(batches);
+  const rows = [...b.shares].sort((a, c) => c[1] - a[1]).map(([bb, n]) => `<div><span class="sw" style="background:${BIOMES[bb][1]}"></span>${BIOMES[bb][0]} — ${n}%</div>`).join('');
+  info.innerHTML = `Гекс уровня ${L} (${SIZE[L]}): <b>${BIOMES[b.dom][0]}</b><br>Внутри — уровень ${L - 1} (${SIZE[L - 1]}):${rows}${statsHtml(b.stats)}` +
+    `<div>Нарушений соседства на экране: <b>${v.total}</b> (на стыках: ${v.border})</div><div class="meta">Клик по яркой клетке — глубже, по бледной — в соседний гекс.</div>`;
+  svg.onclick = e => {
+    const d = e.target.dataset; if (d.p == null) return; const c = batches[+d.p].cells[+d.k];
+    if (+d.p === 0) { if (L - 1 >= 1) { stack.push({ L: L - 1, Q: c.q, R: c.r, label: '#' + c.idx }); render(); } }
+    else { const top = stack[stack.length - 1]; stack[stack.length - 1] = { L, Q: parents[+d.p][0], R: parents[+d.p][1], label: top.label + '→' + DIRS_RU[+d.p - 1] }; render(); }
+  };
+  svg.onmousemove = e => { const d = e.target.dataset; if (d.p == null) return; const c = batches[+d.p].cells[+d.k]; status.textContent = cellText(L - 1, c, `клетка #${c.idx}${+d.p ? ' соседнего гекса' : ''}`); };
+}
+function renderCrumbs() {
+  const el = document.getElementById('crumbs');
+  el.innerHTML = `<button data-i="-1">Мир</button>` + stack.map((s, i) => `<button data-i="${i}">Ур.${s.L} ${s.label}</button>`).join('');
+  el.onclick = e => { const i = e.target.dataset.i; if (i == null) return; stack = stack.slice(0, +i + 1); render(); };
+}
+const STAGES = [['top', 'Верхний уровень (видит всю карту)'], ['draft', 'Черновик (своя пачка + уровень выше)'], ['final', 'Итог (+ черновики соседей, только чтение)']];
+function renderRules() {
+  const el = document.getElementById('rules');
+  el.innerHTML = STAGES.map(([st, title]) => `<div class="stage">${title}</div>` + RULES.map((r, i) => r.stage !== st ? '' : `
+    <div class="rule"><div class="head">
+      <input type="checkbox" data-en="${i}" ${r.enabled || r.locked ? 'checked' : ''} ${r.locked ? 'disabled' : ''}>
+      <span>${r.name}${r.locked ? ' <span class="meta">(базовое)</span>' : ''}</span>
+      ${r.locked ? '' : `<button data-up="${i}">↑</button><button data-down="${i}">↓</button>`}</div>
+      <div class="meta">${r.id}${r.forbids ? ' · запрещает: ' + r.forbids.map(([a, b]) => BIOMES[a][0] + '–' + BIOMES[b][0]).join(', ') : ''}</div>
+      ${r.params.map(p => `<label>${p.label} <input type="range" min="${p.min}" max="${p.max}" step="${p.step}" value="${r.values[p.key]}" data-r="${i}" data-k="${p.key}"><b>${r.values[p.key]}</b></label>`).join('')}
+    </div>`).join('')).join('');
+}
+const rulesEl = document.getElementById('rules');
+rulesEl.addEventListener('input', e => {
+  const d = e.target.dataset;
+  if (d.en != null) RULES[+d.en].enabled = e.target.checked;
+  if (d.r != null) { RULES[+d.r].values[d.k] = +e.target.value; e.target.nextElementSibling.textContent = e.target.value; }
+  regen(false);
+});
+rulesEl.addEventListener('click', e => {
+  const d = e.target.dataset, i = d.up != null ? +d.up : d.down != null ? +d.down : null; if (i == null) return;
+  const dir = d.up != null ? -1 : 1; let j = i + dir;
+  while (j >= 0 && j < RULES.length && RULES[j].stage !== RULES[i].stage) j += dir; // двигаем только внутри своего этапа
+  if (j < 0 || j >= RULES.length || RULES[j].locked) return; // базовое правило всегда первое в своём этапе
+  [RULES[i], RULES[j]] = [RULES[j], RULES[i]]; regen(true);
+});
+document.getElementById('legend').innerHTML = BIOMES.map(([n, c]) => `<div><span style="background:${c}"></span>${n}</div>`).join('');
+function regen(redrawRules = true) {
+  SEED = +document.getElementById('seed').value | 0;
+  cache.clear(); generateTop(); if (redrawRules) renderRules(); render();
+}
+document.getElementById('seed').addEventListener('input', () => regen(false));
+document.getElementById('rnd').onclick = () => { document.getElementById('seed').value = Math.floor(Math.random() * 100000); regen(false); };
+document.getElementById('checkBtn').onclick = () => { document.getElementById('check').textContent = 'Проверяю…'; setTimeout(runSeamCheck, 20); };
+regen();
+</script></body></html>

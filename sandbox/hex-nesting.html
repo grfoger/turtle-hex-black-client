@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><title>Hex nesting</title>
+<style>
+body{font-family:sans-serif;background:#fff;color:#222;margin:16px}
+svg{border:1px solid #ccc;max-width:100%;height:auto}
+.legend{margin:8px 0;font-size:14px;line-height:1.5}
+</style></head><body>
+<h3>Вложение гексов: масштаб 10, одинаковая ориентация (flat-top, фигура симметрична по вертикали)</h3>
+<div class="legend" id="info"></div>
+<svg id="svg" width="760" height="760" viewBox="-240 -240 480 480"></svg>
+<script>
+const s = 7;            // размер ребёнка (центр→вершина)
+const S = 10 * s;       // размер родителя
+const SQ3 = Math.sqrt(3);
+const DIRS = [[1,0],[1,-1],[0,-1],[-1,0],[-1,1],[0,1]]; // axial flat-top: ЮВ, СВ, С, СЗ, ЮЗ, Ю (y вниз)
+const OWNED = new Set([0,2,4]); // свои рёбра: С, ЮВ, ЮЗ — граничные дети на них принадлежат этому гексу
+
+const toPx = (q, r, size) => [size * 1.5 * q, size * SQ3 * (r + q / 2)];
+// «норма» flat-top гекса: <1 внутри, =1 на ребре
+const hexNorm = (x, y, size) => Math.max(Math.abs(y) / (size * SQ3 / 2), (SQ3 * Math.abs(x) + Math.abs(y)) / (size * SQ3));
+
+function cubeRound(fq, fr) {
+  const fs = -fq - fr;
+  let q = Math.round(fq), r = Math.round(fr), ss = Math.round(fs);
+  const dq = Math.abs(q - fq), dr = Math.abs(r - fr), ds = Math.abs(ss - fs);
+  if (dq > dr && dq > ds) q = -r - ss; else if (dr > ds) r = -q - ss;
+  return [q, r];
+}
+
+// кому принадлежит ребёнок (q,r): [Q, R, onEdge]
+function owner(q, r) {
+  const [x, y] = toPx(q, r, s);
+  const fq = (2 / 3 * x) / S, fr = (-x / 3 + SQ3 / 3 * y) / S;
+  const [Q0, R0] = cubeRound(fq, fr);
+  const cands = [[Q0, R0], ...DIRS.map(([a, b]) => [Q0 + a, R0 + b])];
+  const hits = cands.filter(([Q, R]) => { const [cx, cy] = toPx(Q, R, S); return hexNorm(x - cx, y - cy, S) <= 1 + 1e-9; });
+  if (hits.length === 1) {
+    const [Q, R] = hits[0]; const [cx, cy] = toPx(Q, R, S);
+    return [Q, R, Math.abs(hexNorm(x - cx, y - cy, S) - 1) < 1e-9];
+  }
+  // центр ребёнка на общем ребре двух родителей: владеет тот, для кого ребро «своё»
+  const [A, B] = hits;
+  const i = DIRS.findIndex(([a, b]) => A[0] + a === B[0] && A[1] + b === B[1]);
+  return OWNED.has(i) ? [A[0], A[1], true] : [B[0], B[1], true];
+}
+
+const parents = [[0, 0], ...DIRS];
+const colors = ['#f4c26b', '#9fd3a8', '#9cc3e6', '#e6a3a3', '#c9b3e6', '#a8e0e0', '#d9d9a0'];
+const pIndex = (Q, R) => parents.findIndex(([a, b]) => a === Q && b === R);
+const svg = document.getElementById('svg');
+const NS = 'http://www.w3.org/2000/svg';
+const hexPts = (cx, cy, size) => Array.from({ length: 6 }, (_, k) => { const a = Math.PI / 3 * k; return `${cx + size * Math.cos(a)},${cy + size * Math.sin(a)}`; }).join(' ');
+function add(tag, attrs) { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); svg.appendChild(e); return e; }
+
+const counts = new Array(parents.length).fill(0);
+let edgeCount = 0;
+const edgeDots = [];
+for (let q = -30; q <= 30; q++) for (let r = -30; r <= 30; r++) {
+  const [Q, R, onEdge] = owner(q, r);
+  const pi = pIndex(Q, R);
+  if (pi < 0) continue;
+  counts[pi]++;
+  const [x, y] = toPx(q, r, s);
+  add('polygon', { points: hexPts(x, y, s), fill: colors[pi], stroke: '#fff', 'stroke-width': 0.6 });
+  if (pi === 0 && onEdge) edgeCount++;
+  if (onEdge) edgeDots.push([x, y]);
+}
+parents.forEach(([Q, R]) => { const [cx, cy] = toPx(Q, R, S); add('polygon', { points: hexPts(cx, cy, S), fill: 'none', stroke: '#333', 'stroke-width': 1.2 }); });
+// рёбра центрального родителя: красные — «свои», синие — соседа; кружки — точки стыковки (вершины, четверти, середина)
+DIRS.forEach(([a, b], i) => {
+  const [nx, ny] = toPx(a, b, S); const ang = Math.atan2(ny, nx);
+  const p1 = [S * Math.cos(ang - Math.PI / 6), S * Math.sin(ang - Math.PI / 6)];
+  const p2 = [S * Math.cos(ang + Math.PI / 6), S * Math.sin(ang + Math.PI / 6)];
+  add('line', { x1: p1[0], y1: p1[1], x2: p2[0], y2: p2[1], stroke: OWNED.has(i) ? '#d00' : '#06c', 'stroke-width': 2.5 });
+  [0, 0.25, 0.5, 0.75].forEach(t => add('circle', { cx: p1[0] + (p2[0] - p1[0]) * t, cy: p1[1] + (p2[1] - p1[1]) * t, r: 3, fill: 'none', stroke: '#000', 'stroke-width': 1 }));
+});
+edgeDots.forEach(([x, y]) => add('circle', { cx: x, cy: y, r: 1.4, fill: '#000' }));
+
+document.getElementById('info').innerHTML =
+  `Центральный родитель (жёлтый): <b>${counts[0]}</b> детей, из них <b>${edgeCount}</b> с центром ровно на его ребре.<br>` +
+  `Чёрная точка — центр ребёнка лежит на ребре родителя. Красные рёбра центрального — «свои» (такие дети достаются ему), синие — соседа.<br>` +
+  `Пустые кружки — точки стыковки из диздока (вершины, четверти, середина).<br>` +
+  `Детей у соседей (дальние обрезаны краем картинки): ${counts.slice(1).join(', ')}`;
+</script></body></html>

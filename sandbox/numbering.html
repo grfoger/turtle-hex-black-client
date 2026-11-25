@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><title>Hex numbering</title>
+<style>
+body{font-family:sans-serif;background:#fff;color:#222;margin:16px}
+.row{display:flex;flex-wrap:wrap;gap:16px}
+figure{margin:0}
+figcaption{font-size:14px;margin-bottom:4px;max-width:330px}
+svg{border:1px solid #ccc}
+text{font-size:7px;text-anchor:middle;dominant-baseline:central;fill:#222}
+</style></head><body>
+<h3>Варианты нумерации 100 клеток родителя</h3>
+<div class="row" id="row"></div>
+<script>
+const s = 15, S = 10 * s, SQ3 = Math.sqrt(3);
+const DIRS = [[1,0],[1,-1],[0,-1],[-1,0],[-1,1],[0,1]];
+const OWNED = new Set([0,2,4]);
+const toPx = (q, r, size) => [size * 1.5 * q, size * SQ3 * (r + q / 2)];
+const hexNorm = (x, y, size) => Math.max(Math.abs(y) / (size * SQ3 / 2), (SQ3 * Math.abs(x) + Math.abs(y)) / (size * SQ3));
+function cubeRound(fq, fr) {
+  const fs = -fq - fr; let q = Math.round(fq), r = Math.round(fr), ss = Math.round(fs);
+  const dq = Math.abs(q - fq), dr = Math.abs(r - fr), ds = Math.abs(ss - fs);
+  if (dq > dr && dq > ds) q = -r - ss; else if (dr > ds) r = -q - ss; return [q, r];
+}
+function owner(q, r) {
+  const [x, y] = toPx(q, r, s);
+  const [Q0, R0] = cubeRound((2 / 3 * x) / S, (-x / 3 + SQ3 / 3 * y) / S);
+  const hits = [[Q0, R0], ...DIRS.map(([a, b]) => [Q0 + a, R0 + b])]
+    .filter(([Q, R]) => { const [cx, cy] = toPx(Q, R, S); return hexNorm(x - cx, y - cy, S) <= 1 + 1e-9; });
+  if (hits.length === 1) return hits[0];
+  const [A, B] = hits; const i = DIRS.findIndex(([a, b]) => A[0] + a === B[0] && A[1] + b === B[1]);
+  return OWNED.has(i) ? A : B;
+}
+const cells = [];
+for (let q = -10; q <= 10; q++) for (let r = -10; r <= 10; r++) { const [Q, R] = owner(q, r); if (Q === 0 && R === 0) cells.push({ q, r }); }
+const dist = c => (Math.abs(c.q) + Math.abs(c.r) + Math.abs(c.q + c.r)) / 2;
+const angle = c => { const [x, y] = toPx(c.q, c.r, 1); return (Math.atan2(x, -y) + 2 * Math.PI) % (2 * Math.PI); }; // 0 = вверх, по часовой
+
+const variants = [
+  ['Построчно: сверху вниз, слева направо (строка = одинаковая высота центра)', (a, b) => (2 * a.r + a.q) - (2 * b.r + b.q) || a.q - b.q],
+  ['По столбцам: слева направо, в столбце сверху вниз', (a, b) => a.q - b.q || a.r - b.r],
+  ['Спираль: 0 в центре, дальше кольцами по часовой от верха', (a, b) => dist(a) - dist(b) || angle(a) - angle(b)],
+];
+const NS = 'http://www.w3.org/2000/svg';
+const hexPts = (cx, cy, size) => Array.from({ length: 6 }, (_, k) => { const a = Math.PI / 3 * k; return `${cx + size * Math.cos(a)},${cy + size * Math.sin(a)}`; }).join(' ');
+for (const [title, cmp] of variants) {
+  const sorted = [...cells].sort(cmp);
+  const fig = document.createElement('figure');
+  fig.innerHTML = `<figcaption>${title}</figcaption>`;
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('width', 330); svg.setAttribute('height', 300); svg.setAttribute('viewBox', '-165 -150 330 300');
+  const add = (tag, attrs, txt) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (txt != null) e.textContent = txt; svg.appendChild(e); };
+  sorted.forEach((c, i) => {
+    const [x, y] = toPx(c.q, c.r, s);
+    add('polygon', { points: hexPts(x, y, s), fill: `hsl(${i * 3.2},60%,82%)`, stroke: '#fff', 'stroke-width': 1 });
+    add('text', { x, y }, i);
+  });
+  add('polygon', { points: hexPts(0, 0, S), fill: 'none', stroke: '#333', 'stroke-width': 1.2, 'stroke-dasharray': '4 3' });
+  fig.appendChild(svg); document.getElementById('row').appendChild(fig);
+}
+</script></body></html>
