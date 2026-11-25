@@ -31,6 +31,7 @@ svg{border:1px solid #ccc;width:min(720px,100%);height:auto;background:#f6f6f6}
   <label>Кругосветка, гексов 1000 км <input id="wrapN" type="number" min="6" max="60" value="24" style="width:60px"></label>
   <button id="rnd">Другой сид</button>
   <button id="checkBtn">Проверить стыки (6 сидов, вкл. швы замыкания)</button>
+  <label><input type="checkbox" id="wheelLevels"> Колесо меняет уровень</label>
   <label><input type="checkbox" id="editMode"> ✎ Править дороги</label> <select id="editType"></select> <button id="clearEdits">Сбросить правки</button> <span id="editCount" class="meta"></span>
 </div>
 <div id="check"></div>
@@ -832,7 +833,7 @@ function draw() {
     html += `Гекс в центре (ур. ${view.L + 1}, ${SIZE[view.L + 1]}, q=${wq}, r=${wr}): <b>${BIOMES[b.dom][0]}</b>${rows}${statsHtml(b.stats)}` +
       `<div>На экране: нарушений соседства <b>${v.total}</b> (на стыках ${v.border}), разрывов рек/дорог <b>${v.breaks}</b></div>`;
   } else html += statsHtml(topStats);
-  info.innerHTML = html + '<div class="meta">Колесо — масштаб (сам переходит между уровнями), перетаскивание — сдвиг, клик — приблизить клетку.</div>';
+  info.innerHTML = html + '<div class="meta">Колесо — масштаб (с галочкой «Колесо меняет уровень» — и переход между уровнями), перетаскивание — сдвиг, клик по клетке — провалиться в неё, «▲ выше» — на уровень выше.</div>';
   renderCrumbs();
 }
 // значки биомов (в квадрате ±0.6 вокруг центра клетки)
@@ -872,8 +873,9 @@ svg.addEventListener('wheel', e => {
   e.preventDefault();
   const [px, py] = svgPoint(e), f = Math.pow(1.0015, e.deltaY);
   view.w *= f; view.cx = px + (view.cx - px) * f; view.cy = py + (view.cy - py) * f;
-  if (view.w > W_MAX && view.L < TOP) { setLevel(view.L + 1); view.w /= 10; }
-  else if (view.w < W_MIN && view.L > 0) { setLevel(view.L - 1); view.w *= 10; }
+  const wheelLevels = document.getElementById('wheelLevels').checked; // без галочки колесо только масштабирует внутри уровня
+  if (wheelLevels && view.w > W_MAX && view.L < TOP) { setLevel(view.L + 1); view.w /= 10; }
+  else if (wheelLevels && view.w < W_MIN && view.L > 0) { setLevel(view.L - 1); view.w *= 10; }
   view.w = Math.max(3, Math.min(view.L === TOP ? 3 * WRAP_N : W_MAX, view.w));
   render();
 }, { passive: false });
