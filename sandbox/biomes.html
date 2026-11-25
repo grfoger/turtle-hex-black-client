@@ -9,7 +9,12 @@ svg{border:1px solid #ccc;width:min(720px,100%);height:auto;background:#f6f6f6}
 #svg polygon:hover{stroke:#000;stroke-width:.15}
 .side{font-size:13px;width:340px;max-width:100%}
 .legend span,.sw{display:inline-block;width:11px;height:11px;margin-right:6px;vertical-align:middle;border:1px solid #0003}
-#status{min-height:36px;font-size:13px;margin:6px 0;font-family:monospace;white-space:pre-wrap;word-break:break-all}
+.mapbox{position:relative;width:min(720px,100%)}
+.mapbox svg{width:100%}
+#status{position:absolute;left:6px;bottom:6px;right:6px;max-height:30%;overflow:auto;font-size:11px;font-family:monospace;white-space:pre-wrap;word-break:break-all;background:#fffe;border:1px solid #ccc;border-radius:4px;padding:3px 5px;pointer-events:none}
+#status:empty{display:none}
+#lvl{position:absolute;top:6px;right:6px;max-width:58%;max-height:80%;overflow:auto;font-size:12px;background:#fffe;border:1px solid #ccc;border-radius:4px;padding:3px 6px}
+#lvl summary{cursor:pointer;font-weight:bold}
 .stage{margin:8px 0 2px;font-weight:bold}
 .rule{border:1px solid #ddd;border-radius:4px;padding:4px 6px;margin:3px 0}
 .rule .head{display:flex;align-items:center;gap:6px}
@@ -29,10 +34,9 @@ svg{border:1px solid #ccc;width:min(720px,100%);height:auto;background:#f6f6f6}
 </div>
 <div id="check"></div>
 <div class="crumbs" id="crumbs"></div>
-<div id="status"></div>
 <div class="wrap">
-  <svg id="svg"></svg>
-  <div class="side"><div id="info"></div><h4>Типы дорог <span class="meta">(сверху — главные; последний — тропы нижних уровней)</span></h4><div id="roadTypes"></div><h4>Правила</h4><div id="rules"></div><h4>Биомы</h4><div class="legend" id="legend"></div></div>
+  <div class="mapbox"><svg id="svg"></svg><details id="lvl"><summary>ℹ Уровень</summary><div id="info"></div></details><div id="status"></div></div>
+  <div class="side"><h4>Типы дорог <span class="meta">(сверху — главные; последний — тропы нижних уровней)</span></h4><div id="roadTypes"></div><h4>Правила</h4><div id="rules"></div><h4>Биомы</h4><div class="legend" id="legend"></div></div>
 </div>
 <script>
 'use strict';
@@ -169,9 +173,10 @@ function windowPts(pts, x, y, r) {
 }
 // Осевые кривые и цепочки клеток для узла родителя (Q,R). Всё в координатах уровня детей lc.
 // Через точку стыковки кривая проходит поперёк ребра: [снаружи, на ребре, внутри] — у обоих соседей одинаково.
-function buildChains(lc, Q, R, node, kh, meander, ownedFn) {
+function buildChains(lc, Q, R, node, kh, meander, ownedFn, fixJ) {
   const [px, py] = toPx(Q, R, 10);
-  const J = childRound(px + (hash(kh, lc, Q, R, 31) - 0.5) * 5, py + (hash(kh, lc, Q, R, 32) - 0.5) * 5);
+  let J = childRound(px + (hash(kh, lc, Q, R, 31) - 0.5) * 5, py + (hash(kh, lc, Q, R, 32) - 0.5) * 5);
+  if (fixJ) J = fixJ(J);
   const ports = node.ports.map(p => { const pc = childRound(...portXY(Q, R, p.e, p.s, 10)), [dq, dr] = DIRS[p.e];
     return { ...p, pc, inner: [pc[0] - dq, pc[1] - dr], outer: [pc[0] + dq, pc[1] + dr] }; });
   const ins = ports.filter(p => p.io === 'in'), out = ports.find(p => p.io === 'out'), both = ports.filter(p => p.io === 'both');
@@ -194,23 +199,70 @@ function buildChains(lc, Q, R, node, kh, meander, ownedFn) {
   });
   return { chains, J, fail };
 }
+// ================= ручьи через границы гексов =================
+// Решение «через ребро P–B течёт ручей» — чистая функция ребра и клеток уровня родителя → обе стороны получают одно и то же.
+// Направление — по «потенциалу» φ (вода < река < суша по высоте и шуму); у каждой клетки не больше одного выхода (к самому низкому соседу).
+const STREAM_WET = { 2: 0.6, 3: 1, 4: 1.5, 5: 1.2, 6: 1.5, 7: 0.05, 8: 0.3 };
+function topElev(L, q, r) { for (let l = L; l < TOP; l++) [q, r] = parentOf(q, r); const t = topByKey.get(K(q, r)); return t && t.data['top.base'] ? t.data['top.base'].высота : 0; }
+const hasRiver = c => !!(c.data.rivers && (c.data.rivers.ports || c.data.rivers.band));
+function phi(L, c) {
+  if (isLakeOrSea(c)) return -1; if (hasRiver(c)) return 0;
+  return 0.1 + 0.6 * topElev(L, c.q, c.r) + 0.3 * fbm(c.q / 4, c.r / 4, NS_KH.rivers, L, 77);
+}
+function streamCandidate(L, A, e, rate) {
+  const B = getCell(L, A.q + DIRS[e][0], A.r + DIRS[e][1]); if (!B) return null;
+  if (isLakeOrSea(A) && isLakeOrSea(B)) return null;
+  const ra = A.data.rivers, rb = B.data.rivers;
+  if ((ra && ra.band) || (rb && rb.band) || (ra && ra.ports && rb && rb.ports)) return null;
+  if ((ra && ra.ports && ra.ports.some(p => p.e === e)) || (rb && rb.ports && rb.ports.some(p => p.e === (e + 3) % 6))) return null;
+  const wet = c => isLakeOrSea(c) ? 1 : (STREAM_WET[c.b] || 0), [cq, cr, ce] = canonEdge(A.q, A.r, e);
+  return hash(NS_KH.rivers, L, cq, cr, ce, 555) < rate / 100 * (wet(A) + wet(B)) / 2 ? B : null;
+}
+function streamOut(L, U, rate) { // ребро единственного выхода ручья из U или -1
+  const key = 'so' + L + ':' + U.q + ':' + U.r; if (cache.has(key)) return cache.get(key);
+  let best = -1;
+  if (!isLakeOrSea(U) && !(U.data.rivers && U.data.rivers.ports && U.data.rivers.ports.some(p => p.io === 'out'))) {
+    let bf = phi(L, U);
+    for (let e = 0; e < 6; e++) { const B = streamCandidate(L, U, e, rate); if (!B) continue; const f = phi(L, B); if (f < bf) { bf = f; best = e; } }
+  }
+  cache.set(key, best); return best;
+}
+function streamPorts(L, q, r, rate, size) {
+  const P = getCell(L, q, r), out = []; if (!P) return out;
+  for (let e = 0; e < 6; e++) {
+    const B = streamCandidate(L, P, e, rate); if (!B) continue;
+    const io = streamOut(L, P, rate) === e ? 'out' : streamOut(L, B, rate) === (e + 3) % 6 ? 'in' : null;
+    if (io) out.push({ e, s: edgeSlot(L, q, r, e, NS_KH.rivers), size, io, ручей: true });
+  }
+  return out;
+}
 // Общий шаг «линия родителя → дети»: цепочки (если объект ýже порога) или полоса клеток (если шире).
 function refineLinear(ctx, ns, bandBiome, P) {
   const lc = ctx.lvl, kh = NS_KH[ns], scale = Math.pow(10, lc);
   const isBand = size => size >= P.K * scale, halfW = size => size / scale; // ширина гекса = 2 единицы
   const own = (q, r) => ctx.byKey.get(K(q, r));
   const node = c => c.data[ns] || (c.data[ns] = { ports: [] });
+  // ближайшая своя клетка суши (город и развилка дорог не ставятся на воду)
+  const nearLand = J => { const st = own(J[0], J[1]); if (!st || !isLakeOrSea(st)) return J; const seen = new Set([st]), qu = [st];
+    while (qu.length) { const x = qu.shift(); if (!isLakeOrSea(x)) return [x.q, x.r]; for (const [a, b] of DIRS) { const y = ctx.byKey.get(K(x.q + a, x.r + b)); if (y && !seen.has(y)) { seen.add(y); qu.push(y); } } } return J; };
   const segs = [], lineChains = []; let fail = 0, J = null, town = false, myNd = null;
   for (const [a, b] of [[0, 0], ...DIRS]) {
-    const pq = ctx.Q + a, pr = ctx.R + b, above = ctx.cellAbove(pq, pr), nd = above && above.data[ns];
+    const pq = ctx.Q + a, pr = ctx.R + b, above = ctx.cellAbove(pq, pr), mine = a === 0 && b === 0; let nd = above && above.data[ns];
+    const SS = { 3: 20, 2: 4, 1: 1 }[lc];
+    if (mine && ns === 'rivers' && P.streams && SS) { const vs = streamPorts(lc + 1, pq, pr, P.streams, SS); if (vs.length) nd = { ...(nd || {}), ports: [...((nd && nd.ports) || []), ...vs] }; }
     if (!nd) continue;
-    const mine = a === 0 && b === 0;
     if (nd.ports) {
-      const res = buildChains(lc, pq, pr, nd, kh, P.meander, (q, r) => { const [x, y] = parentOf(q, r); return x === pq && y === pr; });
+      const res = buildChains(lc, pq, pr, nd, kh, P.meander, (q, r) => { const [x, y] = parentOf(q, r); return x === pq && y === pr; }, mine && ns === 'roads' ? nearLand : null);
       if (mine) { fail = res.fail; J = res.J; town = nd.town || false; myNd = nd; }
       for (const ch of res.chains) { if (isBand(ch.size)) segs.push({ size: ch.size, pts: ch.pts, cells: mine ? ch.cells : null }); else if (mine) lineChains.push(ch); }
     }
     if (nd.segs) for (const s of nd.segs) segs.push({ size: s.size, pts: s.pts.map(([x, y]) => [x * 10, y * 10]) });
+  }
+  const river = ns === 'rivers', hasIo = io => !!myNd && myNd.ports.some(p => p.io === io);
+  let pond = false;
+  if (river && J && !WATER.has(ctx.dom) && hasIo('in') && !hasIo('out')) {
+    const j = own(J[0], J[1]);
+    if (j) { pond = true; for (const c of [j, ...DIRS.map(([a, b]) => own(J[0] + a, J[1] + b))]) if (c && (c === j || ctx.rand(c.q, c.r, 7) < 0.4)) { c.b = FRESH; c.data[ns] = { ports: [], ...(c.data[ns] || {}), пруд: true }; } }
   }
   // полоса: свои клетки ближе половины ширины к любой оси (своей или соседской — считается одинаково по обе стороны границы)
   const band = new Map(), put = (c, size) => band.set(c, Math.max(band.get(c) || 0, size));
@@ -222,9 +274,9 @@ function refineLinear(ctx, ns, bandBiome, P) {
     c.data[ns] = { band: true, size, under, segs: near };
   }
   // линии: цепочки клеток, у каждой клетки — свои точки стыковки с соседями по цепочке
-  const used = new Set(band.keys()), io = ns === 'rivers' ? ['out', 'in'] : ['both', 'both'], river = ns === 'rivers';
+  const used = new Set(band.keys()), io = river ? ['out', 'in'] : ['both', 'both'];
   const wet = cc => isLakeOrSea(own(cc[0], cc[1]));
-  const hasIo = io => !!myNd && myNd.ports.some(p => p.io === io), wetParent = WATER.has(ctx.dom);
+  const wetParent = WATER.has(ctx.dom) || pond;
   // путь по своим клеткам от cc до ближайшей воды (водоём), без самой cc
   const toWater = cc => { const st = own(cc[0], cc[1]); if (!st) return null; const prev = new Map([[st, null]]), qu = [st];
     while (qu.length) { const x = qu.shift(); if (isLakeOrSea(x)) { const p = []; for (let y = x; y !== st; y = prev.get(y)) p.unshift([y.q, y.r]); return p; }
@@ -251,6 +303,7 @@ function refineLinear(ctx, ns, bandBiome, P) {
       prev = cc;
     }
   }
+  if (river && J && hasIo('out') && !hasIo('in') && myNd.ports.every(p => p.ручей)) { const j = own(J[0], J[1]); if (j && !isLakeOrSea(j)) node(j).spring = true; }
   if (town && J) { const j = own(J[0], J[1]); if (j && !band.has(j)) node(j).town = town; }
   const st = { ветвей: lineChains.length, 'клеток полосы': band.size }; if (fail) st['ошибок трассировки'] = fail; return st;
 }
@@ -439,7 +492,8 @@ const RULES = [
       return { надбавка: +delta.toFixed(3) };
     } },
   { id: 'draft.rivers', ns: 'rivers', stage: 'draft', name: 'Реки родителя → цепочки / полосы детей', params: [
-      { key: 'meander', label: 'Извилистость', min: 0, max: 5, step: 0.25, value: 2.5 }, { key: 'K', label: 'Порог полосы (ширина / клетка)', min: 0.2, max: 2, step: 0.1, value: 0.5 }],
+      { key: 'meander', label: 'Извилистость', min: 0, max: 5, step: 0.25, value: 2.5 }, { key: 'K', label: 'Порог полосы (ширина / клетка)', min: 0.2, max: 2, step: 0.1, value: 0.5 },
+      { key: 'streams', label: 'Ручьи через границы гексов, %', min: 0, max: 80, step: 5, value: 30 }],
     apply(ctx) { return refineLinear(ctx, 'rivers', FRESH, ctx.p); } },
   { id: 'draft.roads', ns: 'roads', stage: 'draft', name: 'Дороги родителя → цепочки / полосы детей', params: [
       { key: 'meander', label: 'Извилистость', min: 0, max: 5, step: 0.25, value: 0.75 }, { key: 'K', label: 'Порог полосы (ширина / клетка)', min: 0.2, max: 2, step: 0.1, value: 0.5 }],
