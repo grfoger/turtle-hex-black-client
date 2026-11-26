@@ -9,9 +9,10 @@ export const S = 1 / Math.sqrt(3);                   // радиус гекса,
 export const px = (q, r) => toPx(q, r, S);
 export const cellAt = (x, y) => childRound(x / S, y / S);
 const STEP_V = 0.5, STEP_E = Math.sqrt(3) / 2, EPS = 1e-6;
-// кому достаётся клетка, рассечённая стеной пополам: 'in' — стороне нормали (внутрь дома), 'out' — наружу,
+// кому достаётся клетка, рассечённая стеной пополам: 'wall' — самой стене (непроходима, ничья),
+// 'in' — стороне нормали (внутрь дома), 'out' — наружу,
 // 'dir' — по общему направлению на карте: у прямоугольника две стены отдают клетки внутрь, две — наружу (площадь ≈ честная)
-export const wallOpts = { tie: 'in' };
+export const wallOpts = { tie: 'wall' };
 const G = [Math.cos(Math.PI / 12), Math.sin(Math.PI / 12)]; // 15°: не перпендикулярно ни одной нормали (они кратны 30°)
 
 // дом: k — угол 30°·k; at — точка привязки (снапится к центру гекса); u, v — отрезки сетки вдоль и поперёк угла;
@@ -36,18 +37,25 @@ function wall(A, B, n, doorsAt, kind, k, inner = false) {
   // тип стены: при нечётном k семейства меняются местами
   if (k % 2) kind = kind === 'вершина–вершина' ? 'грань–грань' : 'вершина–вершина';
   const doors = doorsAt.map(t => [t * len - 0.5, t * len + 0.5]); // дверь шириной 1 м
-  const tie = wallOpts.tie === 'in' ? 1 : wallOpts.tie === 'out' ? -1 : Math.sign(n[0] * G[0] + n[1] * G[1]);
+  const tie = wallOpts.tie === 'in' || wallOpts.tie === 'wall' ? 1 : wallOpts.tie === 'out' ? -1 : Math.sign(n[0] * G[0] + n[1] * G[1]);
   return { A, B, n, len, dir, doors, kind, inner, tie };
 }
 
 const side = (p, w) => { const s = (p[0] - w.A[0]) * w.n[0] + (p[1] - w.A[1]) * w.n[1]; return Math.abs(s) < EPS ? EPS * w.tie : s; };
 // закрыт ли проход между соседними клетками (центры p1, p2) стеной w; open — двери открыты
 export function blocks(w, p1, p2, open = true) {
+  if (wallOpts.tie === 'wall' && (onWall(w, p1) || onWall(w, p2))) return false; // проход решает сама клетка-стена
   const s1 = side(p1, w), s2 = side(p2, w); if ((s1 > 0) === (s2 > 0)) return false;
   const t = s1 / (s1 - s2), x = p1[0] + (p2[0] - p1[0]) * t, y = p1[1] + (p2[1] - p1[1]) * t;
   const tau = (x - w.A[0]) * w.dir[0] + (y - w.A[1]) * w.dir[1];
   if (tau < -EPS || tau > w.len + EPS) return false;
   return !(open && w.doors.some(([a, b]) => tau > a && tau < b));
+}
+// центр клетки лежит на стене (клетка рассечена пополам): 'wall' | 'door' (в проёме двери) | null
+export function onWall(w, p) {
+  const s = (p[0] - w.A[0]) * w.n[0] + (p[1] - w.A[1]) * w.n[1]; if (Math.abs(s) >= EPS) return null;
+  const tau = (p[0] - w.A[0]) * w.dir[0] + (p[1] - w.A[1]) * w.dir[1]; if (tau < -EPS || tau > w.len + EPS) return null;
+  return w.doors.some(([a, b]) => tau > a && tau < b) ? 'door' : 'wall';
 }
 // рассекает ли стена гекс (для подсветки)
 export function cuts(w, p) {
@@ -62,6 +70,20 @@ export function buildMap(buildings, [x0, y0, x1, y1], open) {
   const walls = buildings.flatMap(b => buildingWalls(b).walls), cells = new Map();
   const [qa] = cellAt(x0, 0), [qb] = cellAt(x1, 0);
   for (let q = qa - 1; q <= qb + 1; q++) for (let r = -80; r <= 80; r++) { const [x, y] = px(q, r); if (x >= x0 && x <= x1 && y >= y0 && y <= y1) cells.set(q + ',' + r, { q, r, x, y }); }
+  // дверь привязываем к ближайшему проходу через стену: рассечённая клетка или пара соседей по разные стороны
+  const tauOf = (w, p) => (p[0] - w.A[0]) * w.dir[0] + (p[1] - w.A[1]) * w.dir[1], sOf = (w, p) => (p[0] - w.A[0]) * w.n[0] + (p[1] - w.A[1]) * w.n[1];
+  for (const w of walls) if (w.doors.length) {
+    const pass = [];
+    for (const c of cells.values()) {
+      const s = sOf(w, [c.x, c.y]); if (Math.abs(s) > 1.2) continue;
+      if (Math.abs(s) < EPS) { pass.push(tauOf(w, [c.x, c.y])); continue; }
+      DIRS.forEach(([a, b], j) => { if (j > 2) return; const n = cells.get((c.q + a) + ',' + (c.r + b)); if (!n) return;
+        const s2 = sOf(w, [n.x, n.y]); if (Math.abs(s2) < EPS || (s > 0) === (s2 > 0)) return;
+        const t = s / (s - s2); pass.push(tauOf(w, [c.x + (n.x - c.x) * t, c.y + (n.y - c.y) * t])); });
+    }
+    const inside = pass.filter(t => t > 0.3 && t < w.len - 0.3);
+    w.doors = w.doors.map(([a, b]) => { const m = (a + b) / 2, t = inside.reduce((x, y) => Math.abs(y - m) < Math.abs(x - m) ? y : x, inside[0] ?? m); return [t - 0.4, t + 0.4]; });
+  }
   const closed = [];
   for (const c of cells.values()) DIRS.forEach(([a, b], j) => {
     if (j > 2) return; const n = cells.get((c.q + a) + ',' + (c.r + b)); if (!n) return;
@@ -69,9 +91,15 @@ export function buildMap(buildings, [x0, y0, x1, y1], open) {
   });
   const shut = new Set(closed.map(([c, n]) => c.q + ',' + c.r + '|' + n.q + ',' + n.r));
   const isShut = (c, n) => shut.has(c.q + ',' + c.r + '|' + n.q + ',' + n.r) || shut.has(n.q + ',' + n.r + '|' + c.q + ',' + c.r);
-  const region = (start) => { const seen = new Set([start.q + ',' + start.r]), st = [start];
-    while (st.length) { const c = st.pop(); for (const [a, b] of DIRS) { const k = (c.q + a) + ',' + (c.r + b), n = cells.get(k); if (n && !seen.has(k) && !isShut(c, n)) { seen.add(k); st.push(n); } } }
+  // правило 'wall': рассечённая клетка принадлежит стене — непроходима; в проёме двери — проходима, если дверь открыта
+  for (const c of cells.values()) {
+    c.cut = walls.some(w => cuts(w, [c.x, c.y]));
+    const on = wallOpts.tie === 'wall' ? walls.map(w => onWall(w, [c.x, c.y])) : [];
+    c.wall = on.includes('wall'); c.door = !c.wall && on.includes('door');
+    c.pass = !c.wall && (!c.door || open);
+  }
+  const region = (start) => { const seen = new Set([start.q + ',' + start.r]), st = start.pass ? [start] : [];
+    while (st.length) { const c = st.pop(); for (const [a, b] of DIRS) { const k = (c.q + a) + ',' + (c.r + b), n = cells.get(k); if (n && n.pass && !seen.has(k) && !isShut(c, n)) { seen.add(k); st.push(n); } } }
     return seen; };
-  for (const c of cells.values()) c.cut = walls.some(w => cuts(w, [c.x, c.y]));
   return { walls, cells, closed, region };
 }
