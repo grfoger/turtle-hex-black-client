@@ -26,7 +26,8 @@ function load() {
   $('title').textContent = `Квартал (${Q}, ${R}) — ${D.name}`;
   $('back').href = `town.html?seed=${seed}&R=${town.R}`;
   history.replaceState(null, '', `?seed=${seed}&R=${town.R}&q=${Q}&r=${R}`);
-  $('info').textContent = `выходов улиц: ${plan.exits.length} (${plan.exits.map(x => x.kind === '=' ? 'главная' : 'улица').join(', ')})\n` +
+  $("info").textContent = `схема: ${plan.scheme.name}, поворот ${plan.scheme.rot}°${plan.scheme.mir ? ", отражена" : ""}
+выходов улиц: ${plan.exits.length} (${plan.exits.map(x => x.kind === '=' ? 'главная' : 'улица').join(', ')})\n` +
     `улиц ${plan.streets.length}, переулков ${plan.alleys.length}\nзданий ${plan.buildings.length}: ${Object.entries(kinds).map(([k, v]) => k + ' ' + v).join(', ')}\n` +
     `клеток 1 м: ${cells.length}, из них стены ${cells.filter(c => c.wall).length}, двери ${cells.filter(c => c.door).length}\n` +
     `план ${(t1 - t0).toFixed(0)} мс, клетки ${(t2 - t1).toFixed(0)} мс`;
@@ -41,7 +42,7 @@ function classify() {
     const p = [c.x, c.y];
     if (c.wall) { c.fill = WALLC; continue; } if (c.door) { c.fill = DOOR; continue; }
     const b = plan.buildings.find(b => inPoly(p, b.poly)); if (b) { c.fill = floorOf(b.type); continue; }
-    if (inPoly(p, plan.plaza)) { c.fill = PLAZA; continue; }
+    if (plan.plaza && inPoly(p, plan.plaza)) { c.fill = PLAZA; continue; }
     const s = segs.find(s => dSeg(p, s) <= s.w / 2); c.fill = s ? (s.kind === '=' ? MAIN : s.kind === ',' ? ALLEY : STREET) : YARD;
   }
 }
@@ -64,7 +65,7 @@ function draw() {
   } else {
     // векторный план
     for (const s of [...plan.streets, ...plan.alleys]) { const [x1, y1] = L(s.A), [x2, y2] = L(s.B); h += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${s.kind === '=' ? MAIN : s.kind === ',' ? ALLEY : STREET}" stroke-width="${s.w}" stroke-linecap="square"/>`; }
-    h += `<polygon points="${polyPts(plan.plaza)}" fill="${PLAZA}"/>`;
+    if (plan.plaza) h += `<polygon points="${polyPts(plan.plaza)}" fill="${PLAZA}"/>`;
     for (const b of plan.buildings) h += `<polygon points="${polyPts(b.poly)}" fill="${CELL[b.type].color}" stroke="#2b2118" stroke-width="${b.special ? 0.6 : 0.35}"/>`;
     for (const w of map.walls) for (const [a, b] of w.doors) { const m = (a + b) / 2, [x, y] = L([w.A[0] + w.dir[0] * m, w.A[1] + w.dir[1] * m]); h += `<circle cx="${x}" cy="${y}" r="0.55" fill="${DOOR}" stroke="#2b2118" stroke-width="0.12"/>`; }
   }
