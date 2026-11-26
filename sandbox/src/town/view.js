@@ -48,6 +48,7 @@ function showInfo(Q, R) {
   const i = q.info, D = DISTRICTS[i.district];
   $('info').textContent = `Квартал (${Q}, ${R}) — ${D.name}\nвыходов улиц на гранях: ${i.ports}\n` +
     (i.module ? `модуль: ${i.module}\nповорот ${i.rotation}°${i.mirror ? ', отражён' : ''}, совпадение ${i.score}\nдоводок: ${i.fixes}, тупиков: ${i.deadEnds}` : 'застройка по шаблону района');
+  const a = document.createElement('a'); a.href = `quarter.html?seed=${$('seed').value}&R=${town.R}&q=${Q}&r=${R}`; a.textContent = '\nОткрыть векторный план квартала →'; $('info').appendChild(a);
 }
 
 // ---- управление картой ----
@@ -85,4 +86,5 @@ $('radius').addEventListener('input', rebuild);
 $('borders').addEventListener('change', draw);
 $('labels').addEventListener('change', draw);
 $('rnd').addEventListener('click', () => { $('seed').value = Math.floor(Math.random() * 1e6); rebuild(); });
+{ const p = new URLSearchParams(location.search); if (p.get('seed')) $('seed').value = p.get('seed'); if (p.get('R')) $('radius').value = p.get('R'); }
 initSide(); rebuild();

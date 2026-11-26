@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Квартал 100 м</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 0; background: #f4f1ea; color: #222; }
+  header { padding: 8px 12px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; background: #fff; border-bottom: 1px solid #ddd; }
+  main { display: flex; gap: 12px; padding: 12px; align-items: flex-start; }
+  #svg { flex: 1; min-width: 0; aspect-ratio: 6/5; background: #d8d6cf; border: 1px solid #bbb; display: block; cursor: grab; touch-action: none; }
+  .side { width: 280px; display: flex; flex-direction: column; gap: 10px; }
+  .card { background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 8px 10px; font-size: 13px; }
+  .card h3 { margin: 0 0 6px; font-size: 13px; }
+  .lg { display: flex; align-items: center; gap: 6px; font-size: 12px; margin: 2px 0; }
+  .sw { width: 14px; height: 14px; border: 1px solid #0003; border-radius: 3px; }
+  pre { margin: 0; white-space: pre-wrap; font-size: 12px; }
+  .nav button { min-width: 34px; }
+</style>
+</head>
+<body>
+<header>
+  <a id="back" href="town.html">← город</a>
+  <b id="title">Квартал</b>
+  <label><input id="grid" type="checkbox"> клетки 1 м (тактика)</label>
+  <label><input id="open" type="checkbox" checked> двери открыты</label>
+  <span class="nav">соседний квартал:
+    <button data-d="2" title="север">С</button><button data-d="1" title="северо-восток">СВ</button><button data-d="0" title="юго-восток">ЮВ</button><button data-d="5" title="юг">Ю</button><button data-d="4" title="юго-запад">ЮЗ</button><button data-d="3" title="северо-запад">СЗ</button>
+  </span>
+</header>
+<main>
+  <svg id="svg"></svg>
+  <div class="side">
+    <div class="card"><h3>Сведения</h3><pre id="info"></pre></div>
+    <div class="card"><h3>Обозначения</h3><div id="legend"></div></div>
+    <div class="card" style="color:#555">Колесо — масштаб, перетаскивание — сдвиг. Клетки 1 м удобнее смотреть приблизив. Клик в режиме клеток — куда можно дойти.</div>
+  </div>
+</main>
+<script type="module" src="src/town/quarter-view.js"></script>
+</body>
+</html>
