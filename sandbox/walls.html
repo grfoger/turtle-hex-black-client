@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Стены на гексах 1 м</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 0; background: #f4f1ea; color: #222; }
+  header { padding: 8px 12px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; background: #fff; border-bottom: 1px solid #ddd; }
+  main { display: flex; gap: 12px; padding: 12px; align-items: flex-start; }
+  #svg { flex: 1; min-width: 0; aspect-ratio: 3/2; background: #e9efe0; border: 1px solid #bbb; display: block; cursor: pointer; }
+  .side { width: 300px; display: flex; flex-direction: column; gap: 10px; }
+  .card { background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 8px 10px; font-size: 13px; }
+  .card h3 { margin: 0 0 6px; font-size: 13px; }
+  .card label { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 4px 0; }
+  .lg { display: flex; align-items: center; gap: 6px; font-size: 12px; margin: 3px 0; }
+  .sw { width: 22px; height: 0; border-top: 3px solid; }
+  pre { margin: 0; white-space: pre-wrap; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <b>Стены на гексах 1 м — дома с углом, кратным 30°</b>
+  <label>Рассечённая клетка достаётся <select id="tie"><option value="in">дому (внутрь)</option><option value="out">улице (наружу)</option><option value="dir">по направлению (честная площадь)</option></select></label>
+  <label><input id="open" type="checkbox"> двери открыты</label>
+  <label><input id="showCut" type="checkbox" checked> рассечённые клетки</label>
+  <label><input id="showLogic" type="checkbox"> закрытые рёбра (логика)</label>
+  <span style="color:#666">клик по клетке — куда можно дойти</span>
+</header>
+<main>
+  <svg id="svg"></svg>
+  <div class="side">
+    <div class="card"><h3>Дом справа (редактируемый)</h3>
+      <label>Угол <select id="k"><option value="0">0°</option><option value="1">30°</option><option value="2">60°</option><option value="3">90°</option><option value="4">120°</option><option value="5">150°</option></select></label>
+      <label>Длина (шагов) <input id="du" type="range" min="2" max="16" value="10"></label>
+      <label>Ширина (шагов) <input id="dv" type="range" min="2" max="16" value="9"></label>
+      <label>Перегородка с дверью <input id="cut" type="checkbox" checked></label>
+      <pre id="dims"></pre>
+    </div>
+    <div class="card"><h3>Обозначения</h3>
+      <div class="lg"><span class="sw" style="border-color:#2b2118"></span>стена вершина–вершина (шаг 0,5 м)</div>
+      <div class="lg"><span class="sw" style="border-color:#7a3fb0"></span>стена грань–грань (шаг 0,87 м)</div>
+      <div class="lg"><span class="sw" style="border-color:#e53935"></span>закрытое ребро — то, что видит логика</div>
+      <div class="lg"><span style="width:14px;height:14px;border:1px solid #999;background-image:repeating-linear-gradient(45deg,#0004 0 2px,transparent 2px 5px)"></span>клетка рассечена стеной пополам</div>
+      <div class="lg">цвет клетки — комната (связная область при закрытых дверях)</div>
+    </div>
+    <div class="card"><h3>Сводка</h3><pre id="stats"></pre></div>
+  </div>
+</main>
+<script type="module" src="src/town/walls-view.js"></script>
+</body>
+</html>
