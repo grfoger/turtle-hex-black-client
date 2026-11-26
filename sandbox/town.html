@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Город из кварталов</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 0; background: #f4f1ea; color: #222; }
+  header { padding: 8px 12px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; background: #fff; border-bottom: 1px solid #ddd; }
+  main { display: flex; gap: 12px; padding: 12px; align-items: flex-start; }
+  .mapbox { position: relative; flex: 1; min-width: 0; }
+  #svg { width: 100%; aspect-ratio: 4/3; background: #cfe3a8; border: 1px solid #bbb; cursor: grab; touch-action: none; display: block; }
+  #status { position: absolute; left: 8px; bottom: 8px; background: #fffd; padding: 4px 8px; border-radius: 4px; font-size: 12px; }
+  .side { width: 320px; display: flex; flex-direction: column; gap: 10px; }
+  .card { background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 8px 10px; }
+  .card h3 { margin: 0 0 6px; font-size: 13px; }
+  .lg { display: flex; align-items: center; gap: 6px; font-size: 12px; margin: 2px 0; }
+  .sw { width: 14px; height: 14px; border: 1px solid #0003; border-radius: 3px; }
+  #library { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  #library figure { margin: 0; text-align: center; font-size: 11px; }
+  #library svg { width: 100%; background: #f7f4ec; }
+  pre { margin: 0; white-space: pre-wrap; font-size: 12px; }
+  .ok { color: #2e7d32; } .bad { color: #c62828; }
+</style>
+</head>
+<body>
+<header>
+  <b>Город из кварталов 100 м</b>
+  <label>Сид <input id="seed" type="number" value="1" style="width:70px"></label>
+  <button id="rnd">Другой сид</button>
+  <label>Радиус города <input id="radius" type="range" min="1" max="8" value="4"> <span id="radiusV">4</span></label>
+  <label><input id="borders" type="checkbox" checked> границы кварталов</label>
+  <label><input id="labels" type="checkbox"> подписи районов</label>
+  <span id="check"></span>
+</header>
+<main>
+  <div class="mapbox">
+    <svg id="svg"></svg>
+    <div id="status">колесо — масштаб, перетаскивание — сдвиг, клик — квартал</div>
+  </div>
+  <div class="side">
+    <div class="card"><h3>Квартал</h3><pre id="info">кликни по кварталу</pre></div>
+    <div class="card"><h3>Районы</h3><div id="districts"></div></div>
+    <div class="card"><h3>Клетки 10 м</h3><div id="legend"></div></div>
+    <div class="card"><h3>Ручные модули (без поворота)</h3><div id="library"></div></div>
+  </div>
+</main>
+<script type="module" src="src/town/view.js"></script>
+</body>
+</html>
