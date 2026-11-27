@@ -4,7 +4,7 @@
 Любой тайл — детерминированная функция (сид, рецепт мира, адрес), поэтому стыки сходятся, а порядок открытия не важен.
 
 ```
-npm run sandbox        # http://localhost:8765/biomes.html , прототипы: /town.html (город), /walls.html (стены на гексах 1 м), /quarter.html (векторный квартал), /flower.html (модуль-цветок)
+npm run sandbox        # http://localhost:8765/biomes.html , прототипы: /town.html (город), /walls.html (стены на гексах 1 м), /quarter.html (векторный квартал), /flower.html (модуль-цветок), /parquet.html (редактор паркета квартала)
 npm run sandbox:test   # эталонный снимок + проверка стыков в node
 ```
 

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Редактор паркета квартала</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 0; background: #f4f1ea; color: #222; }
+  header { padding: 8px 12px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; background: #fff; border-bottom: 1px solid #ddd; }
+  main { display: flex; gap: 12px; padding: 12px; align-items: flex-start; }
+  #svg { flex: 1; min-width: 0; aspect-ratio: 1.05; max-height: calc(100vh - 80px); background: #fff; border: 1px solid #bbb; display: block; touch-action: none; user-select: none; }
+  .side { width: 300px; display: flex; flex-direction: column; gap: 10px; }
+  .card { background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 8px 10px; font-size: 13px; }
+  .card h3 { margin: 0 0 6px; font-size: 13px; }
+  .tools button.on, .groups .g.on { outline: 2px solid #1565c0; }
+  .groups { display: flex; flex-direction: column; gap: 3px; max-height: 40vh; overflow: auto; }
+  .groups .g { display: flex; align-items: center; gap: 6px; padding: 2px 4px; border-radius: 4px; cursor: pointer; }
+  .sw { width: 16px; height: 16px; border-radius: 3px; border: 1px solid #0003; flex: none; }
+  .bad { color: #c62828; } .ok { color: #2e7d32; }
+  pre { margin: 0; white-space: pre-wrap; font-size: 12px; }
+  kbd { background: #eee; border: 1px solid #ccc; border-radius: 3px; padding: 0 3px; font-size: 11px; }
+</style>
+</head>
+<body>
+<header>
+  <b>Паркет квартала 100 м</b>
+  <span class="tools">
+    <button data-tool="whole" class="on" title="клик или протяжка: гекс целиком в текущую группу">⬢ целый гекс</button>
+    <button data-tool="half" title="клик по треугольнику: половинка гекса вокруг него — в текущую группу">◗ половинка</button>
+    <button data-tool="pick" title="клик: взять группу этой клетки текущей">💧 пипетка</button>
+    <button data-tool="erase" title="клик или протяжка: убрать гекс из групп">⌫ ластик</button>
+  </span>
+  <button id="undo" title="Ctrl+Z">↶ отменить</button>
+  <label><input id="tris" type="checkbox" checked> треугольники</label>
+  <label><input id="marks" type="checkbox" checked> метки проверок</label>
+</header>
+<main>
+  <svg id="svg"></svg>
+  <div class="side">
+    <div class="card"><h3>Группы <button id="addGroup" style="float:right">+ группа</button></h3><div class="groups" id="groups"></div></div>
+    <div class="card"><h3>Проверка</h3><pre id="check"></pre></div>
+    <div class="card"><h3>Раскладка</h3>
+      <button id="save">Скачать JSON</button> <button id="load">Загрузить…</button> <input id="file" type="file" accept=".json" hidden>
+      <div style="margin-top:6px"><button id="clear">Очистить</button> Заготовка: <input id="vk" type="number" value="10" min="2" max="30" style="width:44px"> групп <button id="voronoi">Создать</button></div>
+    </div>
+    <div class="card" style="color:#555">
+      Гекс 10 м = 6 треугольников. В группу он входит целиком или ровно половинкой (3 треугольника подряд, разрез через противоположные вершины).
+      «Половинка»: клик по треугольнику берёт половину гекса с центром в этом треугольнике, вторая половина остаётся как была.
+      Красные точки — острые углы (60°), оранжевые — разорванная группа. Раскладка сохраняется в браузере сама.
+      <kbd>1</kbd>–<kbd>4</kbd> — инструменты, <kbd>Ctrl+Z</kbd> — отмена.
+    </div>
+  </div>
+</main>
+<script type="module" src="src/town/parquet-editor.js"></script>
+</body>
+</html>
