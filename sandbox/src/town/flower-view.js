@@ -4,7 +4,7 @@ import { DIRS, hexPts } from '../core/hex.js';
 import { rngFrom, strHash } from '../core/random.js';
 import { S, buildMap, cellAt, frame } from './walls.js';
 import { inPoly } from './quarter.js';
-import { CELLS10, R10, EDGES, BAND, ROOM, inFlower, buildFlowerPlan } from './flower.js';
+import { CELLS10, R10, EDGES, BAND, ROOM, VARIANTS, inFlower, buildFlowerPlan } from './flower.js';
 
 const $ = id => document.getElementById(id), svg = $('svg');
 const f2 = v => v.toFixed(3), P2 = p => f2(p[0]) + ',' + f2(p[1]), pts = poly => poly.map(P2).join(' ');
@@ -87,6 +87,11 @@ function furnish(type, W, D, rng) {
   } else if (type === 'tavern') {
     for (const [tx, ty] of [[1.4, 1.4], [3.6, 1.4], [1.4, 3.6]]) if (tx + 0.7 < W && ty + 0.6 < D) s += wood(tx - 0.6, ty - 0.4, 1.2, 0.8, '#9c6a38') + R(tx - 0.6, ty - 0.75, 1.2, 0.25, '#7d5530', 'rx="0.05"') + R(tx - 0.6, ty + 0.5, 1.2, 0.25, '#7d5530', 'rx="0.05"');
     s += wood(x1 - 0.7, y0 + 0.8, 0.55, Math.max(1, D - 2), '#8a5a2e') + barrel(x1 - 0.25, y0 + 0.4, 0.26) + barrel(x1 - 0.25, y1 - 0.3, 0.26) + hearth(x0, y1 - 1.2, 1.2, 0.9);
+  } else if (type === 'hall') {
+    // зал гильдии: два длинных стола с лавками вдоль, стол старшин у дальней стены, камин
+    for (const tx of [W * 0.3, W * 0.62]) if (D > 2.6) s += R(tx - 0.95, y0 + 0.9, 0.3, D - 2.2, '#7d5530', 'rx="0.05"') + wood(tx - 0.6, y0 + 0.9, 0.8, D - 2.2, '#9c6a38') + R(tx + 0.25, y0 + 0.9, 0.3, D - 2.2, '#7d5530', 'rx="0.05"');
+    s += wood(cx - 1.4, y1 - 0.75, 2.8, 0.6, '#6e4520') + chair(cx - 0.8, y1 - 0.1) + chair(cx, y1 - 0.1) + chair(cx + 0.8, y1 - 0.1) + hearth(x1 - 0.7, cy - 0.7, 0.7, 1.4);
+    s += rug(cx - 0.8, y0 + 0.1, 1.6, 0.6, '#3c5f8c');
   } else if (type === 'store') {
     s += crate(x0, y0) + crate(x0 + 0.65, y0) + crate(x0, y0 + 0.65, 0.55) + barrel(x1 - 0.35, y0 + 0.35) + barrel(x1 - 0.35, y0 + 1.05) + sack(cx, y1 - 0.3) + sack(cx + 0.55, y1 - 0.35);
     if (D > 2.4) s += stairs(x1 - 0.9, y1 - 2.2, 0.85, 1.9);
@@ -96,8 +101,8 @@ function furnish(type, W, D, rng) {
 
 // ---------- сборка ----------
 function load() {
-  plan = buildFlowerPlan(+$('seed').value || 1);
-  map = buildMap(plan.buildings, [-16, -16, 16, 16], $('open').checked, inFlower);
+  plan = buildFlowerPlan(+$('seed').value || 1, $('variant').value);
+  map = buildMap([...plan.buildings, ...plan.fences], [-16, -16, 16, 16], $('open').checked, inFlower);
   reach = null; draw();
 }
 function draw() {
@@ -109,11 +114,10 @@ function draw() {
   for (let i = 0; i < 18; i++) { const e = EDGES[Math.floor(rng() * EDGES.length)], t = rng(), p = [e.a[0] + (e.b[0] - e.a[0]) * t, e.a[1] + (e.b[1] - e.a[1]) * t], c = [p[0] * 0.92, p[1] * 0.92];
     g += `<ellipse cx="${f2(c[0])}" cy="${f2(c[1])}" rx="${f2(0.8 + rng())}" ry="${f2(0.5 + rng() * 0.6)}" fill="#8fae62" opacity="0.85"/>`; }
   // улицы: подложка + камни
-  const isMain = (x, y) => Math.abs(x) <= 2, isLane = (x, y) => dSeg([x, y], plan.streets[1].A, plan.streets[1].B) <= 1.5, isHalf = (x, y) => plan.half.some(e => dSeg([x, y], e.a, e.b) <= 2);
-  const ln = plan.streets[1], ld = [ln.B[0] - ln.A[0], ln.B[1] - ln.A[1]], ll = Math.hypot(...ld), lnrm = [-ld[1] / ll * 1.5, ld[0] / ll * 1.5];
-  g += `<rect x="-2" y="-17" width="4" height="34" fill="#8f8573"/><polygon points="${pts([[ln.A[0] + lnrm[0], ln.A[1] + lnrm[1]], [ln.B[0] + lnrm[0], ln.B[1] + lnrm[1]], [ln.B[0] - lnrm[0], ln.B[1] - lnrm[1]], [ln.A[0] - lnrm[0], ln.A[1] - lnrm[1]]])}" fill="#8f8573"/>`;
+  const isMain = (x, y) => Math.abs(x) <= 2, isHalf = (x, y) => plan.half.some(e => dSeg([x, y], e.a, e.b) <= 2);
+  g += `<rect x="-2" y="-17" width="4" height="34" fill="#8f8573"/>`;
   g += `<path d="${plan.half.map(e => `M${P2(e.a)}L${P2(e.b)}`).join('')}" stroke="#8f8573" stroke-width="4" stroke-linejoin="round" stroke-linecap="round" fill="none"/>`;
-  g += cobbles((x, y) => isMain(x, y) || isHalf(x, y) || isLane(x, y), 'main');
+  g += cobbles((x, y) => isMain(x, y) || isHalf(x, y), 'main');
   g += `<line x1="0" y1="-17" x2="0" y2="17" stroke="#6f6656" stroke-width="0.12" stroke-dasharray="0.4 0.15" opacity="0.7"/>`;
   // дома: полы комнат
   for (const b of plan.buildings) for (const rm of b.rooms) {
@@ -129,7 +133,9 @@ function draw() {
   }
   g += `<g filter="url(#sh)">${fur}</g>`;
   // двор: колодец, бочки, поленница — в свободных местах
-  g += `<g filter="url(#sh)"><circle cx="8.4" cy="7.2" r="0.85" fill="#8a8a85" stroke="#55554f" stroke-width="0.12"/><circle cx="8.4" cy="7.2" r="0.52" fill="#3f78ad"/><circle cx="8.25" cy="7.05" r="0.12" fill="#9cc6ea"/>${barrel(10.3, 6.6)}${barrel(10.9, 7.2, 0.28)}${crate(6.4, 8.1)}</g>`;
+  const free = (x, y, r) => inFlower(x, y) && Math.abs(x) > 2 + r && !plan.half.some(e => dSeg([x, y], e.a, e.b) < 2 + r) && !plan.buildings.some(b => inPoly([x, y], b.poly) || b.poly.some((q, i, a) => dSeg([x, y], q, a[(i + 1) % a.length]) < r)) && EDGES.every(e => dSeg([x, y], e.a, e.b) > r + 0.3);
+  let well = null; for (let y = -6; y <= 9 && !well; y += 0.5) for (const x of [7, 8.5, 6, 10, -7, -8.5, -6, -10]) if (free(x, y, 1.6)) { well = [x, y]; break; }
+  if (well) g += `<g filter="url(#sh)"><circle cx="8.4" cy="7.2" r="0.85" fill="#8a8a85" stroke="#55554f" stroke-width="0.12"/><circle cx="8.4" cy="7.2" r="0.52" fill="#3f78ad"/><circle cx="8.25" cy="7.05" r="0.12" fill="#9cc6ea"/>${barrel(10.3, 6.6)}${barrel(10.9, 7.2, 0.28)}${crate(6.4, 8.1)}</g>`.replace(/8.4/g, f2(well[0])).replace(/7.2/g, f2(well[1])).replace(/10.3/g, f2(well[0] + 1.6)).replace(/6.6/g, f2(well[1] - 0.5)).replace(/10.9/g, f2(well[0] + 1.6)).replace(/6.4/g, f2(well[0] - 1.9)).replace(/8.1/g, f2(well[1] + 0.6)).replace(/8.25/g, f2(well[0] - 0.15)).replace(/7.05/g, f2(well[1] - 0.15));
   // стены: тень, кладка, проёмы
   let wd = '', corners = new Set(), windows = '', doorsSvg = '';
   for (const w of map.walls) {
@@ -138,7 +144,7 @@ function draw() {
     for (const [a, b] of segs) if (b > a) wd += `M${P2(P(a))}L${P2(P(b))}`;
     corners.add(P2(w.A)); corners.add(P2(w.B));
     // двери: створка внутрь дома и дуга
-    for (const [a, b] of w.doors) { const h = P(a), e = P(b), n = w.n, L = b - a, tip = [h[0] + n[0] * L, h[1] + n[1] * L];
+    for (const [a, b, isArch] of w.doors) { if (isArch) continue; const h = P(a), e = P(b), n = w.n, L = b - a, tip = [h[0] + n[0] * L, h[1] + n[1] * L];
       doorsSvg += `<line x1="${f2(h[0])}" y1="${f2(h[1])}" x2="${f2(tip[0])}" y2="${f2(tip[1])}" stroke="#6e4520" stroke-width="0.12" stroke-linecap="round"/><path d="M${P2(tip)}A${f2(L)},${f2(L)} 0 0 ${w.n[0] * w.dir[1] - w.n[1] * w.dir[0] > 0 ? 0 : 1} ${P2(e)}" fill="none" stroke="#6e4520" stroke-width="0.04" stroke-dasharray="0.15 0.1"/>`; }
     // окна: в проходах клеток наружных стен, не у дверей и углов
     if (!w.inner && w.pass) { let last = -9; for (const q of w.pass) { if (q < 0.9 || q > w.len - 0.9 || w.doors.some(([a, b]) => q > a - 0.9 && q < b + 0.9) || q - last < 1.6) continue; last = q;
@@ -160,15 +166,17 @@ function draw() {
   // наложения: клетки 1 м, договор границы, достижимость
   if ($('cells').checked || reach) {
     let c = '';
-    for (const cl of map.cells.values()) { const fill = reach ? (reach.has(cl.q + ',' + cl.r) ? '#ffd54f88' : 'none') : cl.wall ? '#55555577' : cl.door ? '#ff980099' : 'none';
+    for (const cl of map.cells.values()) { const fill = reach ? (reach.has(cl.q + ',' + cl.r) ? '#ffd54f88' : 'none') : cl.wall ? '#55555577' : cl.door ? '#ff980099' : cl.arch ? '#43a04799' : 'none';
       c += `<polygon points="${hexPts(cl.x, cl.y, S)}" fill="${fill}" stroke="#0004" stroke-width="0.025"/>`; }
     s += `<g clip-path="url(#fl)" pointer-events="none">${c}</g>`;
   }
   if ($('contract').checked) {
     s += `<g clip-path="url(#fl)" pointer-events="none"><path d="${EDGES.map(e => `M${P2(e.a)}L${P2(e.b)}`).join('')}" stroke="#fff" stroke-opacity="0.55" stroke-width="${BAND * 2}" stroke-linecap="round" fill="none"/></g>`;
-    s += plan.exits.map(([x, y]) => `<circle cx="${x}" cy="${y}" r="0.7" fill="#e53935"/>`).join('') + `<path d="${plan.half.map(e => `M${P2(e.a)}L${P2(e.b)}`).join('')}" stroke="#378add" stroke-width="0.4" fill="none"/>`;
+    s += plan.exits.map(([x, y]) => `<circle cx="${x}" cy="${y}" r="0.7" fill="#e53935"/>`).join('') + `<path d="${plan.half.map(e => `M${P2(e.a)}L${P2(e.b)}`).join('')}" stroke="#378add" stroke-width="0.4" fill="none"/>` + `<path d="${EDGES.filter(e => e.code === 'wall').map(e => `M${P2(e.a)}L${P2(e.b)}`).join('')}" stroke="#9b59b6" stroke-width="1.3" stroke-opacity="0.6" fill="none"/>`;
   }
-  s += `<path d="${EDGES.map(e => `M${P2(e.a)}L${P2(e.b)}`).join('')}" stroke="#5c4a33" stroke-width="0.25" fill="none" stroke-linecap="round"/>`;
+  s += `<path d="${EDGES.filter(e => e.code !== 'wall').map(e => `M${P2(e.a)}L${P2(e.b)}`).join('')}" stroke="#5c4a33" stroke-width="0.25" fill="none" stroke-linecap="round"/>`;
+  const party = EDGES.filter(e => e.code === 'wall').map(e => `M${P2(e.a)}L${P2(e.b)}`).join('');
+  s += `<g filter="url(#wsh)" opacity="0.45" transform="translate(0.25,0.3)"><path d="${party}" stroke="#000" stroke-width="0.9" fill="none"/></g><path d="${party}" stroke="#3e3328" stroke-width="0.9" stroke-linecap="square" fill="none"/><path d="${party}" stroke="#8b7b66" stroke-width="0.68" stroke-dasharray="0.6 0.08" fill="none"/>`;
   svg.innerHTML = s;
   const cells = [...map.cells.values()];
   $('info').textContent = `зданий ${plan.buildings.length}, помещений ${plan.buildings.reduce((a, b) => a + b.rooms.length, 0)}\nклеток 1 м: ${cells.length}, стен ${cells.filter(c => c.wall).length}, дверей ${cells.filter(c => c.door).length}`;
@@ -186,5 +194,6 @@ svg.addEventListener('pointermove', ev => { if (!drag) return; const r = svg.get
   if (Math.abs(dx) + Math.abs(dy) > 4) drag.moved = true; if (drag.moved) { vb[0] = drag.vb[0] - dx / r.width * vb[2]; vb[1] = drag.vb[1] - dy / r.height * vb[3]; setVB(); } });
 svg.addEventListener('pointerup', ev => { if (drag && !drag.moved) { const p = toMap(ev), [q, r] = cellAt(p.x, p.y), c = map.cells.get(q + ',' + r); reach = c && !reach ? map.region(c) : null; draw(); } drag = null; });
 for (const id of ['roofs', 'cells', 'contract']) $(id).addEventListener('change', draw);
-$('open').addEventListener('change', load); $('seed').addEventListener('change', load);
+$('variant').innerHTML = VARIANTS.map(v => `<option value="${v.id}">${v.name}</option>`).join('');
+$('open').addEventListener('change', load); $('seed').addEventListener('change', load); $('variant').addEventListener('change', load);
 setVB(); load();

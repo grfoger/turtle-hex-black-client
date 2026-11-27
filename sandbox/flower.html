@@ -17,6 +17,7 @@
 <body>
 <header>
   <b>Модуль-цветок (7 гексов по 10 м)</b>
+  <label>Вариант <select id="variant"></select></label>
   <label>Сид <input id="seed" type="number" value="1" style="width:60px"></label>
   <label><input id="roofs" type="checkbox"> крыши</label>
   <label><input id="cells" type="checkbox"> клетки 1 м</label>
@@ -27,7 +28,7 @@
   <svg id="svg"></svg>
   <div class="side">
     <div class="card"><h3>Сведения</h3><pre id="info"></pre></div>
-    <div class="card" style="color:#555">Колесо — масштаб, перетаскивание — сдвиг. Клик по клетке — куда можно дойти (ещё клик — сбросить). «Клетки 1 м»: серые — стены, оранжевые — проёмы дверей.</div>
+    <div class="card" style="color:#555">Колесо — масштаб, перетаскивание — сдвиг. Клик по клетке — куда можно дойти (ещё клик — сбросить). «Клетки 1 м»: серые — стены, оранжевые — двери, зелёные — арки. «Договор границы»: красное — улица поперёк, синее — полуулица, фиолетовое — общая стена.</div>
   </div>
 </main>
 <script type="module" src="src/town/flower-view.js"></script>
