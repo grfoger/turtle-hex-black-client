@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Модуль-цветок</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 0; background: #f4f1ea; color: #222; }
+  header { padding: 8px 12px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; background: #fff; border-bottom: 1px solid #ddd; }
+  main { display: flex; gap: 12px; padding: 12px; align-items: flex-start; }
+  #svg { flex: 1; min-width: 0; aspect-ratio: 1; max-height: calc(100vh - 90px); background: #dcd6c8; border: 1px solid #bbb; display: block; cursor: grab; touch-action: none; }
+  .side { width: 260px; display: flex; flex-direction: column; gap: 10px; }
+  .card { background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 8px 10px; font-size: 13px; }
+  .card h3 { margin: 0 0 6px; font-size: 13px; }
+  pre { margin: 0; white-space: pre-wrap; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <b>Модуль-цветок (7 гексов по 10 м)</b>
+  <label>Сид <input id="seed" type="number" value="1" style="width:60px"></label>
+  <label><input id="roofs" type="checkbox"> крыши</label>
+  <label><input id="cells" type="checkbox"> клетки 1 м</label>
+  <label><input id="contract" type="checkbox"> договор границы</label>
+  <label><input id="open" type="checkbox" checked> двери открыты</label>
+</header>
+<main>
+  <svg id="svg"></svg>
+  <div class="side">
+    <div class="card"><h3>Сведения</h3><pre id="info"></pre></div>
+    <div class="card" style="color:#555">Колесо — масштаб, перетаскивание — сдвиг. Клик по клетке — куда можно дойти (ещё клик — сбросить). «Клетки 1 м»: серые — стены, оранжевые — проёмы дверей.</div>
+  </div>
+</main>
+<script type="module" src="src/town/flower-view.js"></script>
+</body>
+</html>

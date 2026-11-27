@@ -91,7 +91,8 @@ export function buildMap(buildings, [x0, y0, x1, y1], open, keep = () => true) {
   const onW = new Map();
   for (const w of walls) for (const c of w.near) if (onWall(w, [c.x, c.y])) { if (!onW.has(c)) onW.set(c, []); onW.get(c).push(w); }
   const busy = (c, w) => (onW.get(c) || []).some(o => o !== w); // клетку режет другая стена (стык, перегородка)
-  for (const w of walls) if (w.doors.length) {
+  // w.pass — все места, где через стену можно пройти по клеткам (для дверей и окон)
+  for (const w of walls) {
     const pass = [];
     for (const c of w.near) {
       const s = sOf(w, [c.x, c.y]); if (Math.abs(s) > 1.2 || busy(c, w)) continue;
@@ -100,7 +101,9 @@ export function buildMap(buildings, [x0, y0, x1, y1], open, keep = () => true) {
         const s2 = sOf(w, [n.x, n.y]); if (Math.abs(s2) < EPS || (s > 0) === (s2 > 0)) return;
         const t = s / (s - s2); pass.push(tauOf(w, [c.x + (n.x - c.x) * t, c.y + (n.y - c.y) * t])); });
     }
-    const inside = pass.filter(t => t > 0.3 && t < w.len - 0.3);
+    const inside = pass.filter(t => t > 0.3 && t < w.len - 0.3).sort((a, b) => a - b);
+    w.pass = inside.filter((t, i) => !i || t - inside[i - 1] > 0.05);
+    if (!w.doors.length) continue;
     w.doors = w.doors.map(([a, b]) => { const m = (a + b) / 2, t = inside.reduce((x, y) => Math.abs(y - m) < Math.abs(x - m) ? y : x, inside[0] ?? m); return [t - 0.4, t + 0.4]; });
   }
   const closed = [], shut = new Set(), pk = (c, n) => c.q + ',' + c.r + '|' + n.q + ',' + n.r;
